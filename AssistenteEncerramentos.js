@@ -2230,7 +2230,7 @@
 	 */
 	function footerHtml() {
 		return '<div class="assistEnc-footer">' +
-			'<span>AssistEnc ' + mw.html.escape(formatVersion(VERSION)) + ' · ' +
+			'<span>AssistEnc ' + mw.html.escape(formatVersion(VERSION)) + '</span>' +
 			'<span class="assistEnc-help">' +
 			'<button type="button" class="assistEnc-helpBtn" aria-label="Ajuda e suporte" title="Ajuda e suporte"' +
 			' aria-haspopup="true" aria-expanded="false">?</button>' +
@@ -2240,8 +2240,10 @@
 				section: 'new'
 			})) + '">Informar um erro</a>' +
 			'<a role="menuitem" target="_blank" rel="noopener" href="' + mw.html.escape(pageUrl(DOC_PAGE)) + '">Documentação</a>' +
-			'<a href="' + mw.html.escape(pageUrl(CHANGELOG_PAGE)) + '" target="_blank" rel="noopener">changelog</a></span>' +
-			'</span></span></div>';
+			'<a href="' + mw.html.escape(pageUrl(CHANGELOG_PAGE)) + '" target="_blank" rel="noopener">changelog</a>' +
+			'</span>' +
+			'</span>' +
+			'</div>';
 	}
 
 	/**
