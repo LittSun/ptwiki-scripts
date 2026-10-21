@@ -1392,7 +1392,7 @@
 	// Versão e links de suporte
 	// ---------------------------------------------------------------------------
 
-	var VERSION = '2.1';
+	var VERSION = '2.1.1';
 
 	var DOC_PAGE = 'Usuário:Little Sunshine/Scripts/AssistenteEncerramentos';
 	var CHANGELOG_PAGE = DOC_PAGE + '/Changelog#' + VERSION;
@@ -1787,11 +1787,30 @@
 			cmReady = mw.loader.using([
 				'ext.CodeMirror.lib',
 				'ext.CodeMirror.mode.mediawiki'
-			]).then(function() {
-				if (!window.CodeMirror || typeof window.CodeMirror.fromTextArea !== 'function') {
-					throw new Error('window.CodeMirror ausente após o carregamento');
+			]).then(function(req) {
+				var CM = null;
+				try {
+					CM = req('ext.CodeMirror.lib');
+				} catch (e) { /* tenta o global */ }
+				if (CM && typeof CM.fromTextArea !== 'function' && CM.default) {
+					CM = CM.default;
 				}
-				return window.CodeMirror;
+				if (!CM || typeof CM.fromTextArea !== 'function') {
+					CM = window.CodeMirror;
+				}
+				if (!CM || typeof CM.fromTextArea !== 'function') {
+					throw new Error('CodeMirror 5 não encontrado (require e window falharam)');
+				}
+				// O modo mediawiki pode se registrar sozinho ou exportar uma função de registro
+				try {
+					var mode = req('ext.CodeMirror.mode.mediawiki');
+					if (typeof mode === 'function' && !(CM.modes && CM.modes.mediawiki)) {
+						mode(CM);
+					}
+				} catch (e) {
+					console.warn('[AssistEnc] Modo mediawiki indisponível:', e); // eslint-disable-line no-console
+				}
+				return CM;
 			}).then(null, function(err) {
 				console.warn('[AssistEnc] CodeMirror indisponível; usando <textarea>:', err); // eslint-disable-line no-console
 				return null;
