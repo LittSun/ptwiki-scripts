@@ -5,7 +5,7 @@ const PAGE_TITLE =
   'Usuário:Little Sunshine/Scripts/AssistenteEncerramentos.js';
 
 const EDIT_SUMMARY =
-  process.env.WIKI_EDIT_SUMMARY?.trim() ||
+  process.env.WIKI_EDIT_SUMMARY?.trim() + ' (via GitHub)' ||
   'Atualização automática a partir do repositório GitHub';
 
 const FILE_PATH = 'AssistenteEncerramentos.min.js';
