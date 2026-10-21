@@ -69,8 +69,8 @@ jobs:
             }
           ' AssistenteEncerramentos.js > "$HEADER_FILE"
 
-          if [[ "$(tail -n 1 AssistenteEncerramentos.js)" != "// </nowiki>" ]]; then
-            echo 'Erro: última linha deve ser // </nowiki>.' >&2
+          if [[ "$(tail -n 1 AssistenteEncerramentos.js)" != "//</nowiki>" ]]; then
+            echo 'Erro: última linha deve ser //</nowiki>.' >&2
             exit 1
           fi
 
