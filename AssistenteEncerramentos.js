@@ -2986,8 +2986,8 @@
 			'</div>' +
 			supHtml + blockHtml +
 			'<p><label for="assistEnc-comment">Comentário (opcional):</label></p>' +
-			customButtonsHtml(customButtons) +
 			'<p><textarea id="assistEnc-comment" rows="10"></textarea></p>' +
+			customButtonsHtml(customButtons) +
 			pingHtml +
 			'<div id="assistEnc-preview"><h4>Antevisão:</h4><div id="assistEnc-previewContent"></div></div>' +
 			footerHtml() +
