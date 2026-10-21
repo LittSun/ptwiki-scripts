@@ -5,7 +5,7 @@
  * Adiciona botão "encerrar" nas seções de páginas de pedidos da Wikipédia
  * lusófona, permitindo encerrar notificações e pedidos via diálogo.
  *
- * Configuração opcional (defina ANTES de carregar o script ou pelo console):
+ * Configuração opcional (defina ANTES de carregar o script ou pelo console de seu navegador):
  *   window.assistEnc = { debug: true, dryRun: true };
  *   - debug:  liga logs detalhados no console (padrão: false).
  *   - dryRun: nenhuma edição real é enviada; a transformação e o resumo
