@@ -10,6 +10,7 @@
  *   - debug:  liga logs detalhados no console (padrão: false).
  *   - dryRun: nenhuma edição real é enviada; a transformação e o resumo
  *             são apenas registrados no console (padrão: false).
+ *   window.assistEncBotoes
  *
  * @author   [[User:Little Sunshine]]
  * @license  MIT
