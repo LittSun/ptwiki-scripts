@@ -1781,36 +1781,31 @@
 
 	var cmReady = null;
 
-	/** Carrega o CodeMirror 5. Resolve com null se indisponível. */
+	/** Carrega o CodeMirror 6 uma vez. Resolve com null se não estiver disponível. */
 	function loadCodeMirror() {
 		if (!cmReady) {
 			cmReady = mw.loader.using([
+				'ext.CodeMirror',
 				'ext.CodeMirror.lib',
 				'ext.CodeMirror.mode.mediawiki'
 			]).then(function(req) {
-				var CM = null;
-				try {
-					CM = req('ext.CodeMirror.lib');
-				} catch (e) { /* tenta o global */ }
-				if (CM && typeof CM.fromTextArea !== 'function' && CM.default) {
-					CM = CM.default;
+				var CM = req('ext.CodeMirror');
+				if (CM && typeof CM !== 'function') {
+					CM = CM.default || CM.CodeMirror;
 				}
-				if (!CM || typeof CM.fromTextArea !== 'function') {
-					CM = window.CodeMirror;
+				var m = req('ext.CodeMirror.mode.mediawiki');
+				var lang = typeof m === 'function' ? m :
+					(m && (m.mediaWikiLang || m.mediawiki || m.default));
+				if (typeof CM !== 'function' || typeof lang !== 'function') {
+					throw new Error('Exports inesperados: ext.CodeMirror=' + typeof CM +
+						' [' + Object.keys(req('ext.CodeMirror') || {}) + '], mode=' + typeof m +
+						' [' + Object.keys(m || {}) + ']');
 				}
-				if (!CM || typeof CM.fromTextArea !== 'function') {
-					throw new Error('CodeMirror 5 não encontrado (require e window falharam)');
-				}
-				// O modo mediawiki pode se registrar sozinho ou exportar uma função de registro
-				try {
-					var mode = req('ext.CodeMirror.mode.mediawiki');
-					if (typeof mode === 'function' && !(CM.modes && CM.modes.mediawiki)) {
-						mode(CM);
-					}
-				} catch (e) {
-					console.warn('[AssistEnc] Modo mediawiki indisponível:', e); // eslint-disable-line no-console
-				}
-				return CM;
+				return {
+					CodeMirror: CM,
+					mode: { mediawiki: lang },
+					lib: req('ext.CodeMirror.lib')
+				};
 			}).then(null, function(err) {
 				console.warn('[AssistEnc] CodeMirror indisponível; usando <textarea>:', err); // eslint-disable-line no-console
 				return null;
@@ -1818,7 +1813,6 @@
 		}
 		return cmReady;
 	}
-
 	/** Menor trecho que difere entre a e b (preserva o histórico de desfazer). */
 	function diffRange(a, b) {
 		var s = 0;
@@ -1839,6 +1833,15 @@
 		};
 	}
 
+	/**
+	 * Cria o editor do comentário. Começa como <textarea> comum e, quando o
+	 * CodeMirror carrega, é substituído por ele sem mudar a interface do objeto:
+	 * getValue(), getSelection(), setValue(v, start, [end]), focus(),
+	 * on('caret'|'keydown'|'blur', fn), aria(nome, valor|null), destroy().
+	 *
+	 * @param  {HTMLTextAreaElement} ta
+	 * @return {Object}
+	 */
 	function createEditor(ta) {
 		var handlers = {
 			caret: [],
@@ -1846,19 +1849,19 @@
 			blur: []
 		};
 		var ariaAttrs = {};
-		var cm = null;
+		var view = null;
 		var destroyed = false;
 		var ed = {};
-	
+
 		$(ta).wrap('<div class="assistEnc-editor"></div>');
 		ed.$wrap = $(ta).parent();
-	
+
 		function emit(name, e) {
 			handlers[name].forEach(function(fn) {
 				fn(e);
 			});
 		}
-	
+
 		function applyAria(target) {
 			Object.keys(ariaAttrs).forEach(function(k) {
 				if (ariaAttrs[k] === null) {
@@ -1868,7 +1871,7 @@
 				}
 			});
 		}
-	
+
 		function onKey(e) {
 			if (e.isComposing) {
 				return;
@@ -1884,7 +1887,7 @@
 			}
 			emit('keydown', e);
 		}
-	
+
 		var onCaret = function() {
 			emit('caret');
 		};
@@ -1905,22 +1908,23 @@
 		Object.keys(taHandlers).forEach(function(k) {
 			ta.addEventListener(k, taHandlers[k]);
 		});
-	
+
 		ed.on = function(name, fn) {
 			handlers[name].push(fn);
 		};
 		ed.aria = function(name, value) {
 			ariaAttrs[name] = value;
-			applyAria(cm ? cm.getInputField() : ta);
+			applyAria(view ? view.contentDOM : ta);
 		};
 		ed.getValue = function() {
-			return cm ? cm.getValue() : ta.value;
+			return view ? view.state.doc.toString() : ta.value;
 		};
 		ed.getSelection = function() {
-			if (cm) {
+			if (view) {
+				var r = view.state.selection.main;
 				return {
-					start: cm.indexFromPos(cm.getCursor('from')),
-					end: cm.indexFromPos(cm.getCursor('to'))
+					start: r.from,
+					end: r.to
 				};
 			}
 			return {
@@ -1932,13 +1936,16 @@
 			if (end === undefined) {
 				end = start;
 			}
-			if (cm) {
-				var d = diffRange(cm.getValue(), value);
-				if (d.from !== d.to || d.insert) {
-					cm.replaceRange(d.insert, cm.posFromIndex(d.from), cm.posFromIndex(d.to));
-				}
-				cm.setSelection(cm.posFromIndex(start), cm.posFromIndex(end));
-				cm.focus();
+			if (view) {
+				view.dispatch({
+					changes: diffRange(view.state.doc.toString(), value),
+					selection: {
+						anchor: start,
+						head: end
+					},
+					userEvent: 'input'
+				});
+				view.focus();
 			} else {
 				ta.value = value;
 				ta.selectionStart = start;
@@ -1948,8 +1955,8 @@
 			}
 		};
 		ed.focus = function() {
-			if (cm) {
-				cm.focus();
+			if (view) {
+				view.focus();
 			} else {
 				ta.focus();
 			}
@@ -1960,86 +1967,72 @@
 				ta.removeEventListener(k, taHandlers[k]);
 			});
 			try {
-				if (cm) {
-					cm.toTextArea();
+				if (view) {
+					view.destroy();
 				}
 			} catch (e) { /* o elemento será removido de qualquer forma */ }
 		};
-	
-		function upgrade(CM) {
-			if (destroyed) {
-				return;
-			}
-			if (!CM) {
-				return; // loadCodeMirror já avisou no console
-			}
-			if (!document.body.contains(ta)) {
+
+		function upgrade(mods) {
+			if (destroyed || !mods || !document.body.contains(ta)) {
 				return;
 			}
 			var hadFocus = document.activeElement === ta;
 			var selStart = ta.selectionStart;
 			var selEnd = ta.selectionEnd;
-			var inst = null;
+			var cm = null;
 			try {
-				var opts = {
-					lineWrapping: true,
-					viewportMargin: Infinity
-				};
-				var cfg = mw.config.get('extCodeMirrorConfig');
-				try {
-					// Tenta o realce de wikitexto; sem configuração do modo, cai para texto simples
-					inst = CM.fromTextArea(ta, $.extend({}, opts, cfg ? {
-						mode: 'text/mediawiki',
-						mwConfig: cfg
-					} : {
-						mode: 'text/mediawiki'
-					}));
-				} catch (e1) {
-					log('[AssistEnc] Modo mediawiki falhou; usando texto simples:', e1);
-					if (inst) {
-						inst.toTextArea();
-					}
-					inst = CM.fromTextArea(ta, opts);
+				var EV = mods.lib && mods.lib.EditorView;
+				if (!EV || !EV.updateListener) {
+					throw new Error('ext.CodeMirror.v6.lib não exporta EditorView');
 				}
-	
-				inst.on('change', function() {
-					// Mantém o <textarea> oculto em sincronia (antevisão ao vivo, leitura do formulário)
-					ta.value = inst.getValue();
-					notifyInput(ta);
-					emit('caret');
-				});
-				inst.on('cursorActivity', function() {
-					emit('caret');
-				});
-				inst.on('keydown', function(_cm, e) {
-					onKey(e); // preventDefault() já basta para o CodeMirror 5 ignorar a tecla
-				});
-				inst.on('blur', function() {
+				var extra = [EV.updateListener.of(function(u) {
+					if (u.docChanged) {
+						// Mantém o <textarea> oculto em sincronia (antevisão ao vivo, leitura do formulário)
+						ta.value = u.state.doc.toString();
+						notifyInput(ta);
+					}
+					if (u.docChanged || u.selectionSet || (u.focusChanged && u.view.hasFocus)) {
+						emit('caret');
+					}
+				})];
+				if (EV.lineWrapping) {
+					extra.push(EV.lineWrapping);
+				}
+				cm = new mods.CodeMirror(ta, mods.mode.mediawiki());
+				cm.initialize([cm.defaultExtensions, extra]);
+
+				// Captura: o atalho/sugestão age antes do keymap do CodeMirror
+				cm.view.dom.addEventListener('keydown', onKey, true);
+				cm.view.contentDOM.addEventListener('blur', function() {
 					emit('blur');
 				});
-	
 				Object.keys(taHandlers).forEach(function(k) {
 					ta.removeEventListener(k, taHandlers[k]);
 				});
-				cm = inst;
-				applyAria(cm.getInputField());
-				cm.setSelection(cm.posFromIndex(selStart), cm.posFromIndex(selEnd));
-				cm.refresh();
+				view = cm.view;
+				applyAria(view.contentDOM);
+				view.dispatch({
+					selection: {
+						anchor: selStart,
+						head: selEnd
+					}
+				});
 				if (hadFocus) {
-					cm.focus();
+					view.focus();
 				}
 			} catch (e) {
-				console.warn('[AssistEnc] Falha ao iniciar o CodeMirror; mantendo <textarea>:', e); // eslint-disable-line no-console
+				log('[AssistEnc] Falha ao iniciar o CodeMirror; mantendo <textarea>:', e);
 				try {
-					if (inst) {
-						inst.toTextArea();
+					if (cm && cm.view) {
+						cm.view.destroy();
 					}
 				} catch (e2) { /* ignorado */ }
 				ta.style.display = '';
-				cm = null;
+				view = null;
 			}
 		}
-	
+
 		loadCodeMirror().then(upgrade);
 		return ed;
 	}
@@ -2190,10 +2183,10 @@
 			/* — Editor: CodeMirror, sugestões, botões e rodapé — */
 			'.assistEnc-smallBtn { font-size: 11px; padding: 2px 6px; }',
 			'.assistEnc-editor { position: relative; display: block; }',
-			'.assistEnc-editor .CodeMirror { height: auto; min-height: 12em; border: 1px solid #a2a9b1; border-radius: 2px; background: var(--background-color-base, #fff); color: var(--color-base, #202122); font-family: monospace; font-size: 15px; line-height: 1.5; }',
-			'.assistEnc-editor .CodeMirror-focused { outline: 1px solid #36c; }',
-			'.assistEnc-editor .CodeMirror-scroll { min-height: 12em; max-height: 45vh; }',
-			'#assistEnc-sheet .assistEnc-editor .CodeMirror, #assistEnc-sheet .assistEnc-editor .CodeMirror-scroll { min-height: 6em; font-size: 16px; }',
+			'.assistEnc-editor .cm-editor { border: 1px solid #a2a9b1; border-radius: 2px; background: var(--background-color-base, #fff); }',
+			'.assistEnc-editor .cm-editor.cm-focused { outline: 1px solid #36c; }',
+			'.assistEnc-editor .cm-scroller { min-height: 12em; max-height: 45vh; overflow: auto; font-family: monospace; font-size: 15px; line-height: 1.5; }',
+			'#assistEnc-sheet .assistEnc-editor .cm-scroller { min-height: 6em; font-size: 16px; }',
 			'.assistEnc-suggest { position: absolute; left: 0; right: 0; top: 100%; z-index: 20; margin: 2px 0 0;',
 			'  padding: 2px 0; list-style: none; max-height: 180px; overflow-y: auto;',
 			'  background: var(--background-color-base, #fff); color: var(--color-base, #202122);',
