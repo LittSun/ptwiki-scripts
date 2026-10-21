@@ -1,4 +1,5 @@
-name: Minificar AssistenteEncerramentos
+
+name: Minificar e publicar AssistenteEncerramentos
 
 on:
   push:
@@ -6,10 +7,15 @@ on:
     paths:
       - "AssistenteEncerramentos.js"
       - ".github/workflows/minificar.yml"
+      - "scripts/publicar-wiki.mjs"
   workflow_dispatch:
 
 permissions:
   contents: write
+
+concurrency:
+  group: assistente-encerramentos-publicacao
+  cancel-in-progress: false
 
 jobs:
   minificar:
@@ -24,13 +30,62 @@ jobs:
         with:
           node-version: 22
 
-      - name: Minificar JavaScript
+      - name: Minificar JavaScript preservando cabeçalho e nowiki
+        shell: bash
         run: |
-          npx --yes terser@5 AssistenteEncerramentos.js \
+          set -euo pipefail
+
+          HEADER_FILE="$(mktemp)"
+          BODY_FILE="$(mktemp)"
+          MIN_FILE="$(mktemp)"
+
+          trap 'rm -f "$HEADER_FILE" "$BODY_FILE" "$MIN_FILE"' EXIT
+
+          awk '
+            NR == 1 && $0 != "//<nowiki>" {
+              print "Erro: //<nowiki> ausente." > "/dev/stderr"
+              exit 1
+            }
+            NR == 2 && $0 != "/**" {
+              print "Erro: início do cabeçalho JSDoc ausente." > "/dev/stderr"
+              exit 1
+            }
+            NR <= 2 {
+              print
+              next
+            }
+            {
+              print
+              if ($0 == " */") {
+                found = 1
+                exit
+              }
+            }
+            END {
+              if (!found) {
+                print "Erro: fechamento do cabeçalho não encontrado." > "/dev/stderr"
+                exit 1
+              }
+            }
+          ' AssistenteEncerramentos.js > "$HEADER_FILE"
+
+          if [[ "$(tail -n 1 AssistenteEncerramentos.js)" != "// </nowiki>" ]]; then
+            echo 'Erro: última linha deve ser // </nowiki>.' >&2
+            exit 1
+          fi
+
+          sed '1,/^ \*\/$/d' AssistenteEncerramentos.js \
+            | sed '$d' > "$BODY_FILE"
+
+          npx --yes terser@5 "$BODY_FILE" \
             --compress \
             --mangle \
-            --format "comments=/^!/" \
-            --output AssistenteEncerramentos.min.js
+            --output "$MIN_FILE"
+
+          cat "$HEADER_FILE" "$MIN_FILE" > AssistenteEncerramentos.min.js
+          printf '\n// </nowiki>\n' >> AssistenteEncerramentos.min.js
+
+          echo "Minificação concluída com cabeçalho e nowiki preservados."
 
       - name: Salvar resultado no GitHub
         run: |
@@ -43,4 +98,12 @@ jobs:
           if ! git diff --cached --quiet; then
             git commit -m "build: minificar AssistenteEncerramentos"
             git push
+          else
+            echo "Nenhuma alteração no arquivo minificado."
           fi
+
+      - name: Publicar na Wikipédia
+        env:
+          WIKI_USERNAME: ${{ secrets.WIKI_USERNAME }}
+          WIKI_BOT_PASSWORD: ${{ secrets.WIKI_BOT_PASSWORD }}
+        run: node scripts/publicar-wiki.mjs
