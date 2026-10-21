@@ -106,4 +106,5 @@ jobs:
         env:
           WIKI_USERNAME: ${{ secrets.WIKI_USERNAME }}
           WIKI_BOT_PASSWORD: ${{ secrets.WIKI_BOT_PASSWORD }}
+          WIKI_EDIT_SUMMARY: ${{ github.event.head_commit.message }}
         run: node scripts/publicar-wiki.mjs
