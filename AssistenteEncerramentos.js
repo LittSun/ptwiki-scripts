@@ -1635,44 +1635,403 @@
 	}
 
 	// ---------------------------------------------------------------------------
-	// Realce de sintaxe mínimo para o campo de comentário
+	// Atalhos de formatação: Ctrl+B, Ctrl+I, Ctrl/Alt+1..4
 	// ---------------------------------------------------------------------------
 
+	/** Tamanho da sequência de apóstrofos que termina (dir<0) ou começa (dir>0) em pos. */
+	function apostropheRun(value, pos, dir) {
+		var n = 0;
+		if (dir < 0) {
+			while (pos - n - 1 >= 0 && value.charAt(pos - n - 1) === "'") {
+				n++;
+			}
+		} else {
+			while (pos + n < value.length && value.charAt(pos + n) === "'") {
+				n++;
+			}
+		}
+		return n;
+	}
+
+	/** n=2 (itálico): sequência de 2 ou 5; n=3 (negrito): sequência de 3 ou 5. */
+	function hasMark(run, n) {
+		return n === 2 ? (run === 2 || run === 5) : (run === 3 || run === 5);
+	}
+
 	/**
-	 * Converte wikitext em HTML com realce de sintaxe mínimo (comentários,
-	 * predefinições, links, menções, tags, aspas de negrito/itálico e
-	 * assinatura). Preserva exatamente o texto (só adiciona <span>s), de modo
-	 * que fique alinhado ao <textarea> sobreposto.
+	 * Alterna '' (n=2) ou ''' (n=3) em volta da seleção.
 	 *
-	 * @param  {string} text
-	 * @return {string}
+	 * @param  {string} value
+	 * @param  {number} start
+	 * @param  {number} end
+	 * @param  {number} n
+	 * @return {{value: string, start: number, end: number}}
 	 */
-	function highlightWikitext(text) {
-		var re = /(<!--[\s\S]*?(?:-->|$))|(@\[\[[^\[\]\n]*\]\])|(\[\[[^\[\]\n]*\]\])|(\{\{[^{}]*\}\}|\{\{|\}\})|(<\/?[A-Za-z][^<>\n]*>)|('{2,5})|(~{3,5})/g;
-		var classes = ['', 'c', 'm', 'l', 't', 'g', 'q', 's'];
-		var out = '';
-		var last = 0;
-		var m;
-		function esc(s) {
-			return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+	function toggleQuotes(value, start, end, n) {
+		var mark = new Array(n + 1).join("'");
+
+		// Marcas logo fora da seleção: remove
+		if (hasMark(apostropheRun(value, start, -1), n) && hasMark(apostropheRun(value, end, 1), n)) {
+			return {
+				value: value.slice(0, start - n) + value.slice(start, end) + value.slice(end + n),
+				start: start - n,
+				end: end - n
+			};
 		}
-		while ((m = re.exec(text)) !== null) {
-			if (m[0] === '') {
-				re.lastIndex++;
-				continue;
-			}
-			out += esc(text.slice(last, m.index));
-			for (var k = 1; k < classes.length; k++) {
-				if (m[k] !== undefined) {
-					out += '<span class="assistEnc-hl-' + classes[k] + '">' + esc(m[0]) + '</span>';
-					break;
+		// Marcas dentro da seleção: remove
+		var sel = value.slice(start, end);
+		var lead = apostropheRun(sel, 0, 1);
+		var trail = apostropheRun(sel, sel.length, -1);
+		if (sel.length > lead + trail && hasMark(lead, n) && hasMark(trail, n)) {
+			var inner = sel.slice(n, sel.length - n);
+			return {
+				value: value.slice(0, start) + inner + value.slice(end),
+				start: start,
+				end: start + inner.length
+			};
+		}
+		// Envolve (ignorando espaços nas pontas, comuns em seleção por duplo clique)
+		var s = start,
+			e = end;
+		while (s < e && /\s/.test(value.charAt(s))) {
+			s++;
+		}
+		while (e > s && /\s/.test(value.charAt(e - 1))) {
+			e--;
+		}
+		return {
+			value: value.slice(0, s) + mark + value.slice(s, e) + mark + value.slice(e),
+			start: s + n,
+			end: e + n
+		};
+	}
+
+	/**
+	 * Alterna título de nível "level" na linha do cursor: "== /i ==".
+	 * Mesmo nível = remove; outro nível = troca; sem título = cria.
+	 *
+	 * @param  {string} value
+	 * @param  {number} start
+	 * @param  {number} end
+	 * @param  {number} level  1 a 4.
+	 * @return {{value: string, start: number, end: number}}
+	 */
+	function toggleHeading(value, start, end, level) {
+		var ls = start === 0 ? 0 : value.lastIndexOf('\n', start - 1) + 1;
+		var le = value.indexOf('\n', start);
+		if (le === -1) {
+			le = value.length;
+		}
+		var line = value.slice(ls, le);
+		var m = /^(={1,6})(.*?)(={1,6})\s*$/.exec(line);
+		var text = (m ? m[2] : line).trim();
+		var newLine, pos;
+
+		if (m && m[1].length === level) {
+			newLine = text;
+			pos = ls + text.length;
+		} else {
+			var eq = new Array(level + 1).join('=');
+			newLine = eq + ' ' + text + ' ' + eq;
+			pos = ls + level + 1 + text.length;
+		}
+		return {
+			value: value.slice(0, ls) + newLine + value.slice(le),
+			start: pos,
+			end: pos
+		};
+	}
+
+	/**
+	 * Devolve a transformação associada a um atalho de teclado (ou null).
+	 * Ctrl/Cmd+B, Ctrl/Cmd+I; Ctrl/Cmd+1..4 e Alt+1..4 (o Alt é alternativa
+	 * porque alguns navegadores reservam Ctrl+número para trocar de aba).
+	 *
+	 * @param  {KeyboardEvent} e
+	 * @return {function(string, number, number): Object|null}
+	 */
+	function shortcutFor(e) {
+		var mod = e.ctrlKey || e.metaKey;
+		if (e.shiftKey) {
+			return null;
+		}
+		var k = String(e.key || '').toLowerCase();
+		if (mod && !e.altKey && (k === 'b' || k === 'i')) {
+			var n = k === 'b' ? 3 : 2;
+			return function(v, s, t) {
+				return toggleQuotes(v, s, t, n);
+			};
+		}
+		var d = /^(?:Digit|Numpad)([1-4])$/.exec(e.code || '');
+		if (d && (mod !== e.altKey)) { // Ctrl/Cmd OU Alt, nunca os dois (AltGr)
+			var level = Number(d[1]);
+			return function(v, s, t) {
+				return toggleHeading(v, s, t, level);
+			};
+		}
+		return null;
+	}
+
+	// ---------------------------------------------------------------------------
+	// Editor do comentário: CodeMirror 6 (com <textarea> como reserva)
+	// ---------------------------------------------------------------------------
+
+	var cmReady = null;
+
+	/** Carrega o CodeMirror 6 uma vez. Resolve com null se não estiver disponível. */
+	function loadCodeMirror() {
+		if (!cmReady) {
+			cmReady = mw.loader.using([
+				'ext.CodeMirror.v6',
+				'ext.CodeMirror.v6.mode.mediawiki',
+				'ext.CodeMirror.v6.lib'
+			]).then(function(req) {
+				return {
+					CodeMirror: req('ext.CodeMirror.v6'),
+					mode: req('ext.CodeMirror.v6.mode.mediawiki'),
+					lib: req('ext.CodeMirror.v6.lib')
+				};
+			}).then(null, function(err) {
+				log('[AssistEnc] CodeMirror indisponível; usando <textarea>:', err);
+				return null;
+			});
+		}
+		return cmReady;
+	}
+
+	/** Menor trecho que difere entre a e b (preserva o histórico de desfazer). */
+	function diffRange(a, b) {
+		var s = 0;
+		var max = Math.min(a.length, b.length);
+		while (s < max && a.charCodeAt(s) === b.charCodeAt(s)) {
+			s++;
+		}
+		var ea = a.length;
+		var eb = b.length;
+		while (ea > s && eb > s && a.charCodeAt(ea - 1) === b.charCodeAt(eb - 1)) {
+			ea--;
+			eb--;
+		}
+		return {
+			from: s,
+			to: ea,
+			insert: b.slice(s, eb)
+		};
+	}
+
+	/**
+	 * Cria o editor do comentário. Começa como <textarea> comum e, quando o
+	 * CodeMirror carrega, é substituído por ele sem mudar a interface do objeto:
+	 * getValue(), getSelection(), setValue(v, start, [end]), focus(),
+	 * on('caret'|'keydown'|'blur', fn), aria(nome, valor|null), destroy().
+	 *
+	 * @param  {HTMLTextAreaElement} ta
+	 * @return {Object}
+	 */
+	function createEditor(ta) {
+		var handlers = {
+			caret: [],
+			keydown: [],
+			blur: []
+		};
+		var ariaAttrs = {};
+		var view = null;
+		var destroyed = false;
+		var ed = {};
+
+		$(ta).wrap('<div class="assistEnc-editor"></div>');
+		ed.$wrap = $(ta).parent();
+
+		function emit(name, e) {
+			handlers[name].forEach(function(fn) {
+				fn(e);
+			});
+		}
+
+		function applyAria(target) {
+			Object.keys(ariaAttrs).forEach(function(k) {
+				if (ariaAttrs[k] === null) {
+					target.removeAttribute(k);
+				} else {
+					target.setAttribute(k, ariaAttrs[k]);
 				}
-			}
-			last = m.index + m[0].length;
+			});
 		}
-		out += esc(text.slice(last));
-		// A quebra final garante a mesma altura do <textarea>
-		return out + '\n';
+
+		function onKey(e) {
+			if (e.isComposing) {
+				return;
+			}
+			var action = shortcutFor(e);
+			if (action) {
+				e.preventDefault();
+				e.stopPropagation();
+				var sel = ed.getSelection();
+				var r = action(ed.getValue(), sel.start, sel.end);
+				ed.setValue(r.value, r.start, r.end);
+				return;
+			}
+			emit('keydown', e);
+		}
+
+		var onCaret = function() {
+			emit('caret');
+		};
+		var taHandlers = {
+			input: onCaret,
+			click: onCaret,
+			focus: onCaret,
+			keyup: function(e) {
+				if (!/^(ArrowUp|ArrowDown|Enter|Tab|Escape)$/.test(e.key)) {
+					emit('caret');
+				}
+			},
+			keydown: onKey,
+			blur: function() {
+				emit('blur');
+			}
+		};
+		Object.keys(taHandlers).forEach(function(k) {
+			ta.addEventListener(k, taHandlers[k]);
+		});
+
+		ed.on = function(name, fn) {
+			handlers[name].push(fn);
+		};
+		ed.aria = function(name, value) {
+			ariaAttrs[name] = value;
+			applyAria(view ? view.contentDOM : ta);
+		};
+		ed.getValue = function() {
+			return view ? view.state.doc.toString() : ta.value;
+		};
+		ed.getSelection = function() {
+			if (view) {
+				var r = view.state.selection.main;
+				return {
+					start: r.from,
+					end: r.to
+				};
+			}
+			return {
+				start: ta.selectionStart,
+				end: ta.selectionEnd
+			};
+		};
+		ed.setValue = function(value, start, end) {
+			if (end === undefined) {
+				end = start;
+			}
+			if (view) {
+				view.dispatch({
+					changes: diffRange(view.state.doc.toString(), value),
+					selection: {
+						anchor: start,
+						head: end
+					},
+					userEvent: 'input'
+				});
+				view.focus();
+			} else {
+				ta.value = value;
+				ta.selectionStart = start;
+				ta.selectionEnd = end;
+				ta.focus();
+				notifyInput(ta);
+			}
+		};
+		ed.focus = function() {
+			if (view) {
+				view.focus();
+			} else {
+				ta.focus();
+			}
+		};
+		ed.destroy = function() {
+			destroyed = true;
+			Object.keys(taHandlers).forEach(function(k) {
+				ta.removeEventListener(k, taHandlers[k]);
+			});
+			try {
+				if (view) {
+					view.destroy();
+				}
+			} catch (e) { /* o elemento será removido de qualquer forma */ }
+		};
+
+		function upgrade(mods) {
+			if (destroyed || !mods || !document.body.contains(ta)) {
+				return;
+			}
+			var hadFocus = document.activeElement === ta;
+			var selStart = ta.selectionStart;
+			var selEnd = ta.selectionEnd;
+			var cm = null;
+			try {
+				var EV = mods.lib && mods.lib.EditorView;
+				if (!EV || !EV.updateListener) {
+					throw new Error('ext.CodeMirror.v6.lib não exporta EditorView');
+				}
+				var extra = [EV.updateListener.of(function(u) {
+					if (u.docChanged) {
+						// Mantém o <textarea> oculto em sincronia (antevisão ao vivo, leitura do formulário)
+						ta.value = u.state.doc.toString();
+						notifyInput(ta);
+					}
+					if (u.docChanged || u.selectionSet || (u.focusChanged && u.view.hasFocus)) {
+						emit('caret');
+					}
+				})];
+				if (EV.lineWrapping) {
+					extra.push(EV.lineWrapping);
+				}
+				cm = new mods.CodeMirror(ta, mods.mode.mediawiki());
+				cm.initialize([cm.defaultExtensions, extra]);
+
+				// Captura: o atalho/sugestão age antes do keymap do CodeMirror
+				cm.view.dom.addEventListener('keydown', onKey, true);
+				cm.view.contentDOM.addEventListener('blur', function() {
+					emit('blur');
+				});
+				Object.keys(taHandlers).forEach(function(k) {
+					ta.removeEventListener(k, taHandlers[k]);
+				});
+				view = cm.view;
+				applyAria(view.contentDOM);
+				view.dispatch({
+					selection: {
+						anchor: selStart,
+						head: selEnd
+					}
+				});
+				if (hadFocus) {
+					view.focus();
+				}
+			} catch (e) {
+				log('[AssistEnc] Falha ao iniciar o CodeMirror; mantendo <textarea>:', e);
+				try {
+					if (cm && cm.view) {
+						cm.view.destroy();
+					}
+				} catch (e2) { /* ignorado */ }
+				ta.style.display = '';
+				view = null;
+			}
+		}
+
+		loadCodeMirror().then(upgrade);
+		return ed;
+	}
+
+	/**
+	 * Insere texto na seleção do editor (substitui-a).
+	 * @param {Object} ed
+	 * @param {string} text
+	 */
+	function insertText(ed, text) {
+		var s = ed.getSelection();
+		var v = ed.getValue();
+		ed.setValue(v.slice(0, s.start) + text + v.slice(s.end), s.start + text.length);
 	}
 
 	// ---------------------------------------------------------------------------
@@ -1771,7 +2130,6 @@
 		cssInjected = true;
 		mw.util.addCSS([
 			/* — Desktop: dialog — */
-			'.assistEnc-editor textarea { display: block; }',
 			'#assistEnc-sheet .assistEnc-smallBtn { font-size: 13px; padding: 4px 8px; }',
 			'#assistEnc-dialog textarea { width: 100%; padding: 5px; box-sizing: border-box; }',
 			'#assistEnc-dialog textarea { resize: vertical; font-family: monospace; font-size: 15px; line-height: 1.5; }',
@@ -1808,19 +2166,13 @@
 			'  width: 100%; box-sizing: border-box; padding: 6px; margin-top: 4px; }',
 			'#assistEnc-sheet textarea {',
 			'  resize: vertical; font-family: monospace; font-size: 16px; line-height: 1.5; min-height: 80px; }',
-			/* — Editor: realce, sugestões, botões e rodapé — */
+			/* — Editor: CodeMirror, sugestões, botões e rodapé — */
 			'.assistEnc-smallBtn { font-size: 11px; padding: 2px 6px; }',
 			'.assistEnc-editor { position: relative; display: block; }',
-			'.assistEnc-editor textarea { position: relative; background: transparent !important; }',
-			'.assistEnc-hl { position: absolute; top: 0; left: 0; right: 0; bottom: 0; overflow: hidden;',
-			'  pointer-events: none; white-space: pre-wrap; word-wrap: break-word; }',
-			'.assistEnc-hl-c { color: #72777d; }',
-			'.assistEnc-hl-m { color: #14866d; }',
-			'.assistEnc-hl-l { color: #36c; }',
-			'.assistEnc-hl-t { color: #b32424; }',
-			'.assistEnc-hl-g { color: #a55858; }',
-			'.assistEnc-hl-q { color: #ac6600; }',
-			'.assistEnc-hl-s { color: #7f5aa6; }',
+			'.assistEnc-editor .cm-editor { border: 1px solid #a2a9b1; border-radius: 2px; background: var(--background-color-base, #fff); }',
+			'.assistEnc-editor .cm-editor.cm-focused { outline: 1px solid #36c; }',
+			'.assistEnc-editor .cm-scroller { min-height: 12em; max-height: 45vh; overflow: auto; font-family: monospace; font-size: 15px; line-height: 1.5; }',
+			'#assistEnc-sheet .assistEnc-editor .cm-scroller { min-height: 6em; font-size: 16px; }',
 			'.assistEnc-suggest { position: absolute; left: 0; right: 0; top: 100%; z-index: 20; margin: 2px 0 0;',
 			'  padding: 2px 0; list-style: none; max-height: 180px; overflow-y: auto;',
 			'  background: var(--background-color-base, #fff); color: var(--color-base, #202122);',
@@ -2104,9 +2456,10 @@
 	 * @return {FormValues}
 	 */
 	function readForm($root) {
+		var ed = $root.data('assistEncEditor');
 		return {
 			choice: $root.find('input[name="assistEnc-result"]:checked').val() || '',
-			comment: $root.find('#assistEnc-comment').val() || '',
+			comment: (ed ? ed.getValue() : $root.find('#assistEnc-comment').val()) || '',
 			blockedBy: $root.find('#assistEnc-blockedBy').val() || '',
 			prazo: $root.find('#assistEnc-prazo').val() || '',
 			ofensivo: !!$root.find('#assistEnc-ofensivo').prop('checked'),
@@ -2130,8 +2483,10 @@
 
 		$root.on('click', '.assistEnc-pingBtn', function() {
 			var name = $(this).attr('data-mention') || '';
-			var mention = '@[[Usuário(a):' + name + '|' + name + ']] ';
-			insertAtCursor(document.getElementById('assistEnc-comment'), mention);
+			var ed = $root.data('assistEncEditor');
+			if (ed) {
+				insertText(ed, '@[[Usuário(a):' + name + '|' + name + ']] ');
+			}
 		});
 	}
 
@@ -2166,24 +2521,7 @@
 	}
 
 	/**
-	 * Insere texto na posição do cursor de um <textarea>.
-	 * @param {HTMLTextAreaElement} textarea
-	 * @param {string}              text
-	 */
-	function insertAtCursor(textarea, text) {
-		if (!textarea) {
-			return;
-		}
-		var start = textarea.selectionStart;
-		var end = textarea.selectionEnd;
-		textarea.value = textarea.value.slice(0, start) + text + textarea.value.slice(end);
-		textarea.selectionStart = textarea.selectionEnd = start + text.length;
-		textarea.focus();
-		notifyInput(textarea);
-	}
-
-	/**
-	 * Avisa os ouvintes (realce, antevisão ao vivo) de que o valor mudou por código.
+	 * Avisa os ouvintes (antevisão ao vivo, leitura do formulário) de que o valor mudou por código.
 	 * @param {HTMLElement} el
 	 */
 	function notifyInput(el) {
@@ -2277,72 +2615,19 @@
 	}
 
 	/**
-	 * Sobrepõe ao <textarea> uma camada com o realce de sintaxe. Qualquer
-	 * falha mantém o campo simples. Devolve a função que re-sincroniza.
-	 *
-	 * @param  {HTMLTextAreaElement} ta
-	 * @return {function()}
-	 */
-	function attachHighlight(ta) {
-		var noop = function() {};
-		try {
-			var cs = window.getComputedStyle(ta);
-			var textColor = cs.color;
-			var $wrap = $('<div class="assistEnc-editor"></div>');
-			var hl = document.createElement('div');
-			hl.className = 'assistEnc-hl';
-			hl.setAttribute('aria-hidden', 'true');
-			['fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'letterSpacing', 'tabSize',
-				'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft'
-			].forEach(function(k) {
-				hl.style[k] = cs[k];
-			});
-			hl.style.borderStyle = 'solid';
-			hl.style.borderColor = 'transparent';
-			hl.style.borderWidth = cs.borderTopWidth + ' ' + cs.borderRightWidth + ' ' + cs.borderBottomWidth + ' ' + cs.borderLeftWidth;
-			hl.style.color = textColor;
-			hl.style.boxSizing = 'border-box';
-			$wrap.css('background', cs.backgroundColor);
-			$(ta).wrap($wrap);
-			$(ta).parent().prepend(hl);
-
-			var basePad = parseFloat(cs.paddingRight) || 0;
-			var sync = function() {
-				hl.innerHTML = highlightWikitext(ta.value);
-				hl.scrollTop = ta.scrollTop;
-				var sb = ta.offsetWidth - ta.clientWidth -
-					(parseFloat(cs.borderLeftWidth) || 0) - (parseFloat(cs.borderRightWidth) || 0);
-				hl.style.paddingRight = (basePad + Math.max(0, sb)) + 'px';
-			};
-			sync();
-			$(ta).on('input scroll', sync);
-			ta.style.color = 'transparent';
-			ta.style.caretColor = textColor;
-			return sync;
-		} catch (e) {
-			log('[AssistEnc] Realce de sintaxe indisponível:', e);
-			ta.style.color = '';
-			return noop;
-		}
-	}
-
-	/**
 	 * Sugestões no campo de comentário: "@" lista os(as) usuários(as)
 	 * identificados(as) e busca outros nomes; "[[" busca páginas.
 	 * Setas navegam, Enter/Tab/clique escolhem, Esc fecha só a lista.
 	 *
-	 * @param  {HTMLTextAreaElement} ta
+	 * @param  {Object}              ed        Editor criado por createEditor().
 	 * @param  {function(): string[]} getUsers  Usuários(as) da seção.
 	 * @return {function()}  Libera timers e requisições.
 	 */
-	function attachSuggestions(ta, getUsers) {
-		var $ta = $(ta);
+	function attachSuggestions(ed, getUsers) {
 		var $list = $('<ul class="assistEnc-suggest" role="listbox" id="assistEnc-suggest" style="display:none"></ul>');
-		$ta.parent().append($list);
-		$ta.attr({
-			'aria-autocomplete': 'list',
-			'aria-controls': 'assistEnc-suggest'
-		});
+		ed.$wrap.append($list);
+		ed.aria('aria-autocomplete', 'list');
+		ed.aria('aria-controls', 'assistEnc-suggest');
 		var items = [];
 		var active = -1;
 		var trig = null;
@@ -2370,7 +2655,7 @@
 			active = -1;
 			shownKey = '';
 			$list.hide().empty();
-			$ta.removeAttr('aria-activedescendant');
+			ed.aria('aria-activedescendant', null);
 		}
 
 		function render(list, info) {
@@ -2381,7 +2666,7 @@
 				$('<li role="option"></li>').attr({
 					id: 'assistEnc-opt-' + i,
 					'aria-selected': i === active ? 'true' : 'false'
-				}).text(v).data('value', v).appendTo($list);
+				}).text(v).appendTo($list);
 			});
 			if (info) {
 				$('<li class="assistEnc-suggest-info" role="presentation"></li>').text(info).appendTo($list);
@@ -2391,11 +2676,7 @@
 			} else {
 				$list.hide();
 			}
-			if (active >= 0) {
-				$ta.attr('aria-activedescendant', 'assistEnc-opt-' + active);
-			} else {
-				$ta.removeAttr('aria-activedescendant');
-			}
+			ed.aria('aria-activedescendant', active >= 0 ? 'assistEnc-opt-' + active : null);
 		}
 
 		function setActive(i) {
@@ -2406,7 +2687,7 @@
 			$list.children('li[role=option]').each(function(k) {
 				$(this).attr('aria-selected', k === active ? 'true' : 'false');
 			});
-			$ta.attr('aria-activedescendant', 'assistEnc-opt-' + active);
+			ed.aria('aria-activedescendant', 'assistEnc-opt-' + active);
 			var el = document.getElementById('assistEnc-opt-' + active);
 			if (el && el.scrollIntoView) {
 				try {
@@ -2421,12 +2702,9 @@
 			if (!trig || i < 0 || i >= items.length) {
 				return;
 			}
-			var res = applySuggestion(ta.value, trig, items[i]);
+			var res = applySuggestion(ed.getValue(), trig, items[i]);
 			close();
-			ta.value = res.value;
-			ta.selectionStart = ta.selectionEnd = res.cursor;
-			ta.focus();
-			notifyInput(ta);
+			ed.setValue(res.value, res.cursor);
 		}
 
 		function merge(local, remote) {
@@ -2440,11 +2718,12 @@
 		}
 
 		function refresh() {
-			if (ta.selectionStart !== ta.selectionEnd) {
+			var sel = ed.getSelection();
+			if (sel.start !== sel.end) {
 				close();
 				return;
 			}
-			var t = detectTrigger(ta.value, ta.selectionStart);
+			var t = detectTrigger(ed.getValue(), sel.start);
 			if (!t) {
 				close();
 				return;
@@ -2493,13 +2772,8 @@
 			}, 250);
 		}
 
-		$ta.on('input click keyup focus', function(e) {
-			if (e.type === 'keyup' && /^(ArrowUp|ArrowDown|Enter|Tab|Escape)$/.test(e.key)) {
-				return;
-			}
-			refresh();
-		});
-		$ta.on('keydown', function(e) {
+		ed.on('caret', refresh);
+		ed.on('keydown', function(e) {
 			if ($list.css('display') === 'none') {
 				return;
 			}
@@ -2516,10 +2790,10 @@
 				close();
 			}
 		});
-		$ta.on('blur', function() {
+		ed.on('blur', function() {
 			setTimeout(close, 150);
 		});
-		// mousedown (e não click) evita perder o foco do campo antes de escolher
+		// mousedown (e não click) evita perder o foco do editor antes de escolher
 		$list.on('mousedown', 'li[role=option]', function(e) {
 			e.preventDefault();
 			choose($(this).index());
@@ -2529,7 +2803,7 @@
 	}
 
 	/**
-	 * Liga tudo o que o formulário tem além dos campos básicos: realce,
+	 * Liga tudo o que o formulário tem além dos campos básicos: editor,
 	 * sugestões, botões personalizados, "último bloqueio" e antevisão ao vivo.
 	 * Cada recurso é isolado: a falha de um não afeta os demais.
 	 *
@@ -2539,20 +2813,23 @@
 	 */
 	function enhanceForm($root, session, info) {
 		var ta = $root.find('#assistEnc-comment')[0];
+		var ed = ta ? createEditor(ta) : null;
 		var cleanups = [];
 		var notificado = session.data.notificado;
+		if (ed) {
+			$root.data('assistEncEditor', ed);
+			cleanups.push(ed.destroy);
+		}
 
 		// Botões personalizados (texto com "/i" = posição da seleção)
 		$root.on('click', '.assistEnc-customBtn', function() {
 			var b = info.buttons[Number($(this).attr('data-index'))];
-			if (!b || !ta) {
+			if (!b || !ed) {
 				return;
 			}
-			var r = applyCustomText(ta.value, ta.selectionStart, ta.selectionEnd, b.texto);
-			ta.value = r.value;
-			ta.focus();
-			ta.selectionStart = ta.selectionEnd = r.cursor;
-			notifyInput(ta);
+			var sel = ed.getSelection();
+			var r = applyCustomText(ed.getValue(), sel.start, sel.end, b.texto);
+			ed.setValue(r.value, r.cursor);
 		});
 
 		// Obter último bloqueio
@@ -2608,14 +2885,9 @@
 			clearTimeout(liveTimer);
 		});
 
-		if (ta) {
+		if (ed) {
 			try {
-				attachHighlight(ta);
-			} catch (e) {
-				log('[AssistEnc] Realce:', e);
-			}
-			try {
-				cleanups.push(attachSuggestions(ta, function() {
+				cleanups.push(attachSuggestions(ed, function() {
 					return collectUsers(session.data.wikitext, [info.notificante, REQUEST_TYPE === 'notificação' ? notificado : '']);
 				}));
 			} catch (e) {
@@ -2851,9 +3123,9 @@
 
 			supHtml + blockHtml +
 
-			'<label class="assistEnc-label">Comentário (opcional)<br>' +
+			'<div class="assistEnc-label"><label for="assistEnc-comment">Comentário (opcional)</label>' +
 			customButtonsHtml(customButtons, 'mw-ui-button') +
-			'<textarea id="assistEnc-comment" rows="4"></textarea></label>' +
+			'<textarea id="assistEnc-comment" rows="4"></textarea></div>' +
 
 			pingHtml +
 
@@ -3252,6 +3524,8 @@
 		$(addButtons);
 		// Lê as seções em segundo plano para a abertura ser quase instantânea
 		setTimeout(prefetchSections, PREFETCH_DELAY);
+		// Pré-carrega o CodeMirror para o diálogo já abrir com ele
+		setTimeout(loadCodeMirror, PREFETCH_DELAY);
 	}
 
 	mw.loader.using([
