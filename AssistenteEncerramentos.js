@@ -1781,21 +1781,19 @@
 
 	var cmReady = null;
 
-	/** Carrega o CodeMirror 6 uma vez. Resolve com null se não estiver disponível. */
+	/** Carrega o CodeMirror 5. Resolve com null se indisponível. */
 	function loadCodeMirror() {
 		if (!cmReady) {
 			cmReady = mw.loader.using([
-				'ext.CodeMirror.v6',
-				'ext.CodeMirror.v6.mode.mediawiki',
-				'ext.CodeMirror.v6.lib'
-			]).then(function(req) {
-				return {
-					CodeMirror: req('ext.CodeMirror.v6'),
-					mode: req('ext.CodeMirror.v6.mode.mediawiki'),
-					lib: req('ext.CodeMirror.v6.lib')
-				};
+				'ext.CodeMirror.lib',
+				'ext.CodeMirror.mode.mediawiki'
+			]).then(function() {
+				if (!window.CodeMirror || typeof window.CodeMirror.fromTextArea !== 'function') {
+					throw new Error('window.CodeMirror ausente após o carregamento');
+				}
+				return window.CodeMirror;
 			}).then(null, function(err) {
-				log('[AssistEnc] CodeMirror indisponível; usando <textarea>:', err);
+				console.warn('[AssistEnc] CodeMirror indisponível; usando <textarea>:', err); // eslint-disable-line no-console
 				return null;
 			});
 		}
@@ -1822,15 +1820,6 @@
 		};
 	}
 
-	/**
-	 * Cria o editor do comentário. Começa como <textarea> comum e, quando o
-	 * CodeMirror carrega, é substituído por ele sem mudar a interface do objeto:
-	 * getValue(), getSelection(), setValue(v, start, [end]), focus(),
-	 * on('caret'|'keydown'|'blur', fn), aria(nome, valor|null), destroy().
-	 *
-	 * @param  {HTMLTextAreaElement} ta
-	 * @return {Object}
-	 */
 	function createEditor(ta) {
 		var handlers = {
 			caret: [],
@@ -1838,19 +1827,19 @@
 			blur: []
 		};
 		var ariaAttrs = {};
-		var view = null;
+		var cm = null;
 		var destroyed = false;
 		var ed = {};
-
+	
 		$(ta).wrap('<div class="assistEnc-editor"></div>');
 		ed.$wrap = $(ta).parent();
-
+	
 		function emit(name, e) {
 			handlers[name].forEach(function(fn) {
 				fn(e);
 			});
 		}
-
+	
 		function applyAria(target) {
 			Object.keys(ariaAttrs).forEach(function(k) {
 				if (ariaAttrs[k] === null) {
@@ -1860,7 +1849,7 @@
 				}
 			});
 		}
-
+	
 		function onKey(e) {
 			if (e.isComposing) {
 				return;
@@ -1876,7 +1865,7 @@
 			}
 			emit('keydown', e);
 		}
-
+	
 		var onCaret = function() {
 			emit('caret');
 		};
@@ -1897,23 +1886,22 @@
 		Object.keys(taHandlers).forEach(function(k) {
 			ta.addEventListener(k, taHandlers[k]);
 		});
-
+	
 		ed.on = function(name, fn) {
 			handlers[name].push(fn);
 		};
 		ed.aria = function(name, value) {
 			ariaAttrs[name] = value;
-			applyAria(view ? view.contentDOM : ta);
+			applyAria(cm ? cm.getInputField() : ta);
 		};
 		ed.getValue = function() {
-			return view ? view.state.doc.toString() : ta.value;
+			return cm ? cm.getValue() : ta.value;
 		};
 		ed.getSelection = function() {
-			if (view) {
-				var r = view.state.selection.main;
+			if (cm) {
 				return {
-					start: r.from,
-					end: r.to
+					start: cm.indexFromPos(cm.getCursor('from')),
+					end: cm.indexFromPos(cm.getCursor('to'))
 				};
 			}
 			return {
@@ -1925,16 +1913,13 @@
 			if (end === undefined) {
 				end = start;
 			}
-			if (view) {
-				view.dispatch({
-					changes: diffRange(view.state.doc.toString(), value),
-					selection: {
-						anchor: start,
-						head: end
-					},
-					userEvent: 'input'
-				});
-				view.focus();
+			if (cm) {
+				var d = diffRange(cm.getValue(), value);
+				if (d.from !== d.to || d.insert) {
+					cm.replaceRange(d.insert, cm.posFromIndex(d.from), cm.posFromIndex(d.to));
+				}
+				cm.setSelection(cm.posFromIndex(start), cm.posFromIndex(end));
+				cm.focus();
 			} else {
 				ta.value = value;
 				ta.selectionStart = start;
@@ -1944,8 +1929,8 @@
 			}
 		};
 		ed.focus = function() {
-			if (view) {
-				view.focus();
+			if (cm) {
+				cm.focus();
 			} else {
 				ta.focus();
 			}
@@ -1956,72 +1941,86 @@
 				ta.removeEventListener(k, taHandlers[k]);
 			});
 			try {
-				if (view) {
-					view.destroy();
+				if (cm) {
+					cm.toTextArea();
 				}
 			} catch (e) { /* o elemento será removido de qualquer forma */ }
 		};
-
-		function upgrade(mods) {
-			if (destroyed || !mods || !document.body.contains(ta)) {
+	
+		function upgrade(CM) {
+			if (destroyed) {
+				return;
+			}
+			if (!CM) {
+				return; // loadCodeMirror já avisou no console
+			}
+			if (!document.body.contains(ta)) {
 				return;
 			}
 			var hadFocus = document.activeElement === ta;
 			var selStart = ta.selectionStart;
 			var selEnd = ta.selectionEnd;
-			var cm = null;
+			var inst = null;
 			try {
-				var EV = mods.lib && mods.lib.EditorView;
-				if (!EV || !EV.updateListener) {
-					throw new Error('ext.CodeMirror.v6.lib não exporta EditorView');
-				}
-				var extra = [EV.updateListener.of(function(u) {
-					if (u.docChanged) {
-						// Mantém o <textarea> oculto em sincronia (antevisão ao vivo, leitura do formulário)
-						ta.value = u.state.doc.toString();
-						notifyInput(ta);
+				var opts = {
+					lineWrapping: true,
+					viewportMargin: Infinity
+				};
+				var cfg = mw.config.get('extCodeMirrorConfig');
+				try {
+					// Tenta o realce de wikitexto; sem configuração do modo, cai para texto simples
+					inst = CM.fromTextArea(ta, $.extend({}, opts, cfg ? {
+						mode: 'text/mediawiki',
+						mwConfig: cfg
+					} : {
+						mode: 'text/mediawiki'
+					}));
+				} catch (e1) {
+					log('[AssistEnc] Modo mediawiki falhou; usando texto simples:', e1);
+					if (inst) {
+						inst.toTextArea();
 					}
-					if (u.docChanged || u.selectionSet || (u.focusChanged && u.view.hasFocus)) {
-						emit('caret');
-					}
-				})];
-				if (EV.lineWrapping) {
-					extra.push(EV.lineWrapping);
+					inst = CM.fromTextArea(ta, opts);
 				}
-				cm = new mods.CodeMirror(ta, mods.mode.mediawiki());
-				cm.initialize([cm.defaultExtensions, extra]);
-
-				// Captura: o atalho/sugestão age antes do keymap do CodeMirror
-				cm.view.dom.addEventListener('keydown', onKey, true);
-				cm.view.contentDOM.addEventListener('blur', function() {
+	
+				inst.on('change', function() {
+					// Mantém o <textarea> oculto em sincronia (antevisão ao vivo, leitura do formulário)
+					ta.value = inst.getValue();
+					notifyInput(ta);
+					emit('caret');
+				});
+				inst.on('cursorActivity', function() {
+					emit('caret');
+				});
+				inst.on('keydown', function(_cm, e) {
+					onKey(e); // preventDefault() já basta para o CodeMirror 5 ignorar a tecla
+				});
+				inst.on('blur', function() {
 					emit('blur');
 				});
+	
 				Object.keys(taHandlers).forEach(function(k) {
 					ta.removeEventListener(k, taHandlers[k]);
 				});
-				view = cm.view;
-				applyAria(view.contentDOM);
-				view.dispatch({
-					selection: {
-						anchor: selStart,
-						head: selEnd
-					}
-				});
+				cm = inst;
+				applyAria(cm.getInputField());
+				cm.setSelection(cm.posFromIndex(selStart), cm.posFromIndex(selEnd));
+				cm.refresh();
 				if (hadFocus) {
-					view.focus();
+					cm.focus();
 				}
 			} catch (e) {
-				log('[AssistEnc] Falha ao iniciar o CodeMirror; mantendo <textarea>:', e);
+				console.warn('[AssistEnc] Falha ao iniciar o CodeMirror; mantendo <textarea>:', e); // eslint-disable-line no-console
 				try {
-					if (cm && cm.view) {
-						cm.view.destroy();
+					if (inst) {
+						inst.toTextArea();
 					}
 				} catch (e2) { /* ignorado */ }
 				ta.style.display = '';
-				view = null;
+				cm = null;
 			}
 		}
-
+	
 		loadCodeMirror().then(upgrade);
 		return ed;
 	}
@@ -2172,10 +2171,10 @@
 			/* — Editor: CodeMirror, sugestões, botões e rodapé — */
 			'.assistEnc-smallBtn { font-size: 11px; padding: 2px 6px; }',
 			'.assistEnc-editor { position: relative; display: block; }',
-			'.assistEnc-editor .cm-editor { border: 1px solid #a2a9b1; border-radius: 2px; background: var(--background-color-base, #fff); }',
-			'.assistEnc-editor .cm-editor.cm-focused { outline: 1px solid #36c; }',
-			'.assistEnc-editor .cm-scroller { min-height: 12em; max-height: 45vh; overflow: auto; font-family: monospace; font-size: 15px; line-height: 1.5; }',
-			'#assistEnc-sheet .assistEnc-editor .cm-scroller { min-height: 6em; font-size: 16px; }',
+			'.assistEnc-editor .CodeMirror { height: auto; min-height: 12em; border: 1px solid #a2a9b1; border-radius: 2px; background: var(--background-color-base, #fff); color: var(--color-base, #202122); font-family: monospace; font-size: 15px; line-height: 1.5; }',
+			'.assistEnc-editor .CodeMirror-focused { outline: 1px solid #36c; }',
+			'.assistEnc-editor .CodeMirror-scroll { min-height: 12em; max-height: 45vh; }',
+			'#assistEnc-sheet .assistEnc-editor .CodeMirror, #assistEnc-sheet .assistEnc-editor .CodeMirror-scroll { min-height: 6em; font-size: 16px; }',
 			'.assistEnc-suggest { position: absolute; left: 0; right: 0; top: 100%; z-index: 20; margin: 2px 0 0;',
 			'  padding: 2px 0; list-style: none; max-height: 180px; overflow-y: auto;',
 			'  background: var(--background-color-base, #fff); color: var(--color-base, #202122);',
