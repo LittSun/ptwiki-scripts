@@ -2173,7 +2173,7 @@
 			'#assistEnc-sheet textarea {',
 			'  width: 100%; box-sizing: border-box; padding: 6px; margin-top: 4px; }',
 			'#assistEnc-sheet textarea {',
-			'  resize: vertical; font-family: monospace; font-size: 16px; line-height: 1.5; min-height: 80px; }',
+			'  resize: vertical; font-family: monospace; font-size: 14px; line-height: 1.5; min-height: 80px; }',
 			/* — Editor: CodeMirror, sugestões, botões e rodapé — */
 			'.assistEnc-smallBtn { font-size: 11px; padding: 2px 6px; }',
 			'.assistEnc-editor { position: relative; display: block; }',
