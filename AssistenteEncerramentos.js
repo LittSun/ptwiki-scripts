@@ -1392,7 +1392,7 @@
 	var VERSION = '2.1';
 
 	var DOC_PAGE = 'Usuário:Little Sunshine/Scripts/AssistenteEncerramentos';
-	var CHANGELOG_PAGE = DOC_PAGE + '/Changelog';
+	var CHANGELOG_PAGE = DOC_PAGE + '/Changelog#' + VERSION;
 	var BUGS_PAGE = 'Usuário Discussão:Little Sunshine/Scripts/AssistenteEncerramentos';
 
 	/**
@@ -2578,7 +2578,7 @@
 				section: 'new'
 			})) + '">Informar um erro</a>' +
 			'<a role="menuitem" target="_blank" rel="noopener" href="' + mw.html.escape(pageUrl(DOC_PAGE)) + '">Documentação</a>' +
-			'<a href="' + mw.html.escape(pageUrl(CHANGELOG_PAGE)) + '" target="_blank" rel="noopener">changelog</a>' +
+			'<a href="' + mw.html.escape(pageUrl(CHANGELOG_PAGE)) + '" target="_blank" rel="noopener">Changelog</a>' +
 			'</span>' +
 			'</span>' +
 			'</div>';
