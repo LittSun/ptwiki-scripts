@@ -1,0 +1,46 @@
+name: Minificar AssistenteEncerramentos
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "AssistenteEncerramentos.js"
+      - ".github/workflows/minificar.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  minificar:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Baixar repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Minificar JavaScript
+        run: |
+          npx --yes terser@5 AssistenteEncerramentos.js \
+            --compress \
+            --mangle \
+            --format "comments=/^!/" \
+            --output AssistenteEncerramentos.min.js
+
+      - name: Salvar resultado no GitHub
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add AssistenteEncerramentos.min.js
+
+          if ! git diff --cached --quiet; then
+            git commit -m "build: minificar AssistenteEncerramentos"
+            git push
+          fi
