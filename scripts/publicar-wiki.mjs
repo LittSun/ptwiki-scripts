@@ -46,47 +46,108 @@ function saveCookies(response) {
   }
 }
 
+
 async function api(params, method = 'GET') {
-  const headers = {
-    'User-Agent':
-      'AssistenteEncerramentos-GitHubActions/1.0 (pt.wikipedia.org)'
-  };
+  const maxAttempts = 5;
 
-  if (cookies.size > 0) {
-    headers.Cookie = [...cookies]
-      .map(([key, value]) => `${key}=${value}`)
-      .join('; ');
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const headers = {
+      'User-Agent':
+        'AssistenteEncerramentos-GitHubActions/1.0 (https://github.com/LittSun/ptwiki-scripts)'
+    };
+
+    if (cookies.size > 0) {
+      headers.Cookie = [...cookies]
+        .map(([key, value]) => `${key}=${value}`)
+        .join('; ');
+    }
+
+    const options = { method, headers };
+    let url = API_URL;
+
+    if (method === 'GET') {
+      url += `?${new URLSearchParams(params)}`;
+    } else {
+      headers['Content-Type'] =
+        'application/x-www-form-urlencoded';
+      options.body = new URLSearchParams(params);
+    }
+
+    let response;
+
+    try {
+      response = await fetch(url, options);
+    } catch (error) {
+      if (attempt === maxAttempts) {
+        throw error;
+      }
+
+      const delay = Math.min(5000 * 2 ** (attempt - 1), 60000);
+      console.log(
+        `Falha de rede. Nova tentativa em ${delay / 1000}s (${attempt}/${maxAttempts}).`
+      );
+
+      await new Promise(resolve => setTimeout(resolve, delay));
+      continue;
+    }
+
+    saveCookies(response);
+
+    if (response.status === 429 || response.status === 503) {
+      const retryAfter = response.headers.get('Retry-After');
+      let delay;
+
+      if (retryAfter && /^\d+$/.test(retryAfter.trim())) {
+        delay = Number(retryAfter) * 1000;
+      } else if (retryAfter) {
+        const retryDate = Date.parse(retryAfter);
+        delay = Number.isNaN(retryDate)
+          ? 5000 * 2 ** (attempt - 1)
+          : Math.max(0, retryDate - Date.now());
+      } else {
+        delay = 5000 * 2 ** (attempt - 1);
+      }
+
+      if (attempt === maxAttempts) {
+        const body = (await response.text()).slice(0, 500);
+
+        throw new Error(
+          `API indisponível após ${maxAttempts} tentativas. ` +
+          `HTTP ${response.status}. Resposta: ${body}`
+        );
+      }
+
+      console.log(
+        `HTTP ${response.status}. Aguardando ${Math.ceil(delay / 1000)}s antes de tentar novamente (${attempt}/${maxAttempts}).`
+      );
+
+      await response.body?.cancel();
+      await new Promise(resolve => setTimeout(resolve, delay));
+      continue;
+    }
+
+    if (!response.ok) {
+      const body = (await response.text()).slice(0, 500);
+
+      throw new Error(
+        `Erro HTTP ${response.status} na API da wiki: ${body}`
+      );
+    }
+
+    const data = await response.json();
+
+    if (data.error) {
+      throw new Error(
+        `Erro da API (${data.error.code}): ${data.error.info}`
+      );
+    }
+
+    return data;
   }
 
-  const options = { method, headers };
-  let url = API_URL;
-
-  if (method === 'GET') {
-    url += `?${new URLSearchParams(params)}`;
-  } else {
-    headers['Content-Type'] =
-      'application/x-www-form-urlencoded';
-
-    options.body = new URLSearchParams(params);
-  }
-
-  const response = await fetch(url, options);
-  saveCookies(response);
-
-  if (!response.ok) {
-    throw new Error(`Erro HTTP ${response.status} na API da wiki.`);
-  }
-
-  const data = await response.json();
-
-  if (data.error) {
-    throw new Error(
-      `Erro da API (${data.error.code}): ${data.error.info}`
-    );
-  }
-
-  return data;
+  throw new Error('Número máximo de tentativas excedido.');
 }
+
 
 const loginTokenResponse = await api({
   action: 'query',
