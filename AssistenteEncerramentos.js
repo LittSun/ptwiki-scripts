@@ -86,7 +86,7 @@
 	}
 	/** Liga logs detalhados no console (desligado por padrão em produção). */
 	if (typeof window.assistEnc.debug === 'undefined') {
-		window.assistEnc.debug = false;
+		window.assistEnc.debug = true;
 	}
 
 	// Sai cedo se não estiver numa página suportada
@@ -578,27 +578,6 @@
 	}
 
 	/**
-	 * Busca páginas cujo título começa por "prefix" (o prefixo de espaço de
-	 * nomes, se houver, é interpretado pela própria API).
-	 * @param  {string} prefix
-	 * @return {jQuery.Promise.<string[]>}
-	 */
-	function searchPages(prefix) {
-		return apiLookup({
-			action: 'query',
-			list: 'prefixsearch',
-			pssearch: String(prefix).trim(),
-			pslimit: 8,
-			psnamespace: 0,
-			formatversion: 2
-		}, function(data) {
-			return data.query.prefixsearch.map(function(r) {
-				return r.title;
-			});
-		}, 'prefixsearch');
-	}
-
-	/**
 	 * Consulta o último bloqueio de um(a) usuário(a) no registro.
 	 * Resolve com o resultado de parseLastBlock() ou null se nunca foi bloqueado(a).
 	 *
@@ -632,6 +611,51 @@
 	var prefetching = null;
 
 	/**
+	 * Âncoras das seções que recebem o botão "encerrar" (mesmos critérios de
+	 * addButtonsMobile/addButtonsDesktop: h2 com id e ainda não encerrada).
+	 *
+	 * @return {Object.<string, boolean>}
+	 */
+	function getEligibleAnchors() {
+		var out = {};
+		var headings = document.querySelectorAll([
+			'.section-heading',
+			'div.mw-heading.mw-heading2',
+			'div.mw-heading.mf-collapsible-heading'
+		].join(', '));
+		Array.prototype.forEach.call(headings, function(el) {
+			var h2 = el.tagName === 'H2' ? el : el.querySelector('h2');
+			if (h2 && h2.id && !isMarkedClosed(el)) {
+				out[h2.id] = true;
+			}
+		});
+		return out;
+	}
+	
+	/**
+	 * Posições (em caracteres) dos títulos de nível 1 e 2 no wikitext,
+	 * ignorando os que estão dentro de comentários, nowiki, pre e syntaxhighlight.
+	 *
+	 * @param  {string} content
+	 * @return {number[]}
+	 */
+	function findTopHeadingOffsets(content) {
+		var masked = content.replace(
+			/<!--[\s\S]*?-->|<nowiki>[\s\S]*?<\/nowiki>|<pre[\s\S]*?<\/pre>|<syntaxhighlight[\s\S]*?<\/syntaxhighlight>/gi,
+			function(m) {
+				return m.replace(/[^\n]/g, ' '); // preserva as posições
+			}
+		);
+		var re = /^={1,2}(?!=)[^\n]*=[ \t]*$/gm;
+		var offsets = [];
+		var m;
+		while ((m = re.exec(masked)) !== null) {
+			offsets.push(m.index);
+		}
+		return offsets;
+	}
+
+	/**
 	 * Lê a página inteira UMA vez (lista de seções + wikitext) e recorta as
 	 * seções de nível 2 localmente, pelos deslocamentos em bytes. Entradas que
 	 * não puderem ser recortadas com segurança são omitidas — nesse caso a
@@ -642,9 +666,6 @@
 	function prefetchSections() {
 		if (prefetching) {
 			return prefetching;
-		}
-		if (typeof TextEncoder === 'undefined' || typeof TextDecoder === 'undefined') {
-			return $.Deferred().resolve(null).promise();
 		}
 		prefetching = apiGet({
 			action: 'parse',
@@ -669,40 +690,34 @@
 				var rev = page && !page.missing && page.revisions && page.revisions[0];
 				var content = rev && rev.slots && rev.slots.main && rev.slots.main.content;
 				if (typeof content !== 'string' || !rev.revid || (parse.revid && parse.revid !== rev.revid)) {
+					log('[AssistEnc] Pré-carregamento: conteúdo indisponível ou revisões diferentes.');
 					return null;
 				}
-				var bytes = new TextEncoder().encode(content);
-				var dec = new TextDecoder('utf-8');
-				var secs = parse.sections;
+	
+				// Seções de nível 1/2 do wikitext (as transcluídas, "T-n", não existem nele)
+				var secs = parse.sections.filter(function(s) {
+					return s && /^\d+$/.test(String(s.index)) && Number(s.level) <= 2;
+				});
+				var offsets = findTopHeadingOffsets(content);
 				var out = {};
-				for (var i = 0; i < secs.length; i++) {
-					var s = secs[i];
-					if (!s || String(s.level) !== '2' || typeof s.byteoffset !== 'number' || !/^\d+$/.test(String(s.index))) {
-						continue;
-					}
-					var end = bytes.length;
-					var ok = true;
-					for (var j = i + 1; j < secs.length; j++) {
-						var n = secs[j];
-						if (!n || Number(n.level) > 2) {
+				if (offsets.length !== secs.length) {
+					log('[AssistEnc] Pré-carregamento: títulos no wikitext (' + offsets.length +
+						') ≠ seções da API (' + secs.length + '); usando a leitura normal.');
+				} else {
+					var eligible = getEligibleAnchors();
+					for (var i = 0; i < secs.length; i++) {
+						var s = secs[i];
+						if (Number(s.level) !== 2 || !eligible[s.anchor]) {
 							continue;
 						}
-						if (typeof n.byteoffset !== 'number') {
-							ok = false; // título de nível 2 transcluído: limite desconhecido
-						} else {
-							end = n.byteoffset;
+						var end = i + 1 < offsets.length ? offsets[i + 1] : content.length;
+						var text = content.slice(offsets[i], end).replace(/\s+$/, '');
+						if (/^==[^=]/.test(text)) {
+							out[s.anchor] = {
+								index: String(s.index),
+								text: text
+							};
 						}
-						break;
-					}
-					if (!ok || end < s.byteoffset) {
-						continue;
-					}
-					var text = dec.decode(bytes.subarray(s.byteoffset, end)).replace(/\s+$/, '');
-					if (/^==[^=]/.test(text)) {
-						out[s.anchor] = {
-							index: String(s.index),
-							text: text
-						};
 					}
 				}
 				return {
@@ -1527,7 +1542,7 @@
 	}
 
 	// ---------------------------------------------------------------------------
-	// Sugestões no campo de comentário: "@" (usuários) e "[[" (páginas)
+	// Sugestões no campo de comentário: "@" (usuários)
 	// ---------------------------------------------------------------------------
 
 	/**
@@ -1550,27 +1565,15 @@
 		var before = text.slice(0, pos);
 		var tail = text.slice(pos);
 		var m = /(^|[\s(])@([^\s@\[\]|{}<>]{0,40})$/.exec(before);
-		if (m) {
-			return {
-				kind: 'mention',
-				start: pos - m[2].length - 1,
-				end: pos + /^[^\s@\[\]|{}<>]*/.exec(tail)[0].length,
-				query: m[2]
-			};
+		if (!m) {
+			return null;
 		}
-		var i = before.lastIndexOf('[[');
-		if (i !== -1) {
-			var seg = before.slice(i + 2);
-			if (seg.length >= 2 && !/[\]\[|{}\n<>]/.test(seg)) {
-				return {
-					kind: 'link',
-					start: i + 2,
-					end: pos + /^[^|\]\[\n{}<>]*/.exec(tail)[0].length,
-					query: seg
-				};
-			}
-		}
-		return null;
+		return {
+			kind: 'mention',
+			start: pos - m[2].length - 1,
+			end: pos + /^[^\s@\[\]|{}<>]*/.exec(tail)[0].length,
+			query: m[2]
+		};
 	}
 
 	/**
@@ -1582,19 +1585,10 @@
 	 * @return {{value: string, cursor: number}}
 	 */
 	function applySuggestion(text, trig, name) {
-		var rep, closing = '';
-		if (trig.kind === 'mention') {
-			rep = '@[[Usuário(a):' + name + '|' + name + ']] ';
-		} else {
-			rep = name;
-			var after = text.slice(trig.end, trig.end + 2);
-			if (after !== ']]' && text.charAt(trig.end) !== '|') {
-				closing = ']]';
-			}
-		}
+		var rep = '@[[Usuário(a):' + name + '|' + name + ']] ';
 		return {
-			value: text.slice(0, trig.start) + rep + closing + text.slice(trig.end),
-			cursor: trig.start + rep.length + closing.length
+			value: text.slice(0, trig.start) + rep + text.slice(trig.end),
+			cursor: trig.start + rep.length
 		};
 	}
 
@@ -2742,7 +2736,7 @@
 				close();
 				return;
 			}
-			var key = t.kind + ':' + t.start + ':' + t.query;
+			var key = t.start + ':' + t.query;
 			if (key === shownKey) {
 				return;
 			}
@@ -2750,32 +2744,24 @@
 			shownKey = key;
 			trig = t;
 			var mySeq = seq;
-			var lookup;
-			var local = [];
-			if (t.kind === 'mention') {
-				var q = t.query.toLowerCase();
-				local = getUsers().filter(function(n) {
-					return n.toLowerCase().indexOf(q) !== -1;
-				});
-				render(local, t.query.length >= 2 ? 'Buscando…' : '');
-				lookup = t.query.length >= 2 ? searchUsers : null;
-			} else {
-				render([], 'Buscando…');
-				lookup = searchPages;
-			}
-			if (!lookup) {
+			var q = t.query.toLowerCase();
+			var local = getUsers().filter(function(n) {
+				return n.toLowerCase().indexOf(q) !== -1;
+			});
+			render(local, t.query.length >= 2 ? 'Buscando…' : '');
+			if (t.query.length < 2) {
 				return;
 			}
 			// Pausa curta para não consultar a cada tecla
 			timer = setTimeout(function() {
 				timer = null;
-				req = lookup(t.query);
+				req = searchUsers(t.query);
 				req.then(function(names) {
 					if (mySeq !== seq || !trig) {
 						return;
 					}
-					var list = t.kind === 'mention' ? merge(local, names) : names;
-					render(list, list.length ? '' : (t.kind === 'mention' ? 'Nenhum(a) usuário(a) encontrado(a).' : 'Nenhuma página encontrada.'));
+					var list = merge(local, names);
+					render(list, list.length ? '' : 'Nenhum(a) usuário(a) encontrado(a).');
 				}, function(err) {
 					if (mySeq !== seq) {
 						return;
