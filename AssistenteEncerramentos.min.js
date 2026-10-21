@@ -5,6 +5,8 @@
  * Adiciona botão "encerrar" nas seções de páginas de pedidos da Wikipédia
  * lusófona, permitindo encerrar notificações e pedidos via diálogo.
  *
+ * Esta ferramenta é muito grande para a Wikipédia e portanto está minificada. A atualização de seu código no GitHub atualiza automaticamente o código do script de usuário da Wikipédia. Favor não editar código minificado diretamente diretamente.
+ *
  * Configuração opcional (defina ANTES de carregar o script ou pelo console de seu navegador):
  *   window.assistEnc = { debug: true, dryRun: true };
  *   - debug:  liga logs detalhados no console (padrão: false).
