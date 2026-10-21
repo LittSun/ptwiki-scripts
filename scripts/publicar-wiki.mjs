@@ -25,8 +25,8 @@ if (!content.startsWith('//<nowiki>\n')) {
   throw new Error('O cabeçalho //<nowiki> não foi encontrado.');
 }
 
-if (!content.trimEnd().endsWith('// </nowiki>')) {
-  throw new Error('O fechamento // </nowiki> não foi encontrado.');
+if (!content.trimEnd().endsWith('//</nowiki>')) {
+  throw new Error('O fechamento //</nowiki> não foi encontrado.');
 }
 
 // Mantém os cookies recebidos durante a sessão autenticada.
