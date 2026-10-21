@@ -83,7 +83,7 @@ jobs:
             --output "$MIN_FILE"
 
           cat "$HEADER_FILE" "$MIN_FILE" > AssistenteEncerramentos.min.js
-          printf '\n// </nowiki>\n' >> AssistenteEncerramentos.min.js
+          printf '\n//</nowiki>\n' >> AssistenteEncerramentos.min.js
 
           echo "Minificação concluída com cabeçalho e nowiki preservados."
 
