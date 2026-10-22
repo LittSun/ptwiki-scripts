@@ -2128,7 +2128,7 @@
 	}
 
 	// ---------------------------------------------------------------------------
-	// CSS (injetado uma única vez)
+	// CSS
 	// ---------------------------------------------------------------------------
 
 	var CSS_TITLE = 'Usuário(a):Little Sunshine/Scripts/AssistenteEncerramentos.css';
