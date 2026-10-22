@@ -4,7 +4,8 @@ on:
   push:
     branches: [main]
     paths:
-      - "AssistenteEncerramentos.js"
+      - "AssistEnc/AssistenteEncerramentos.js"
+      - "AssistEnc/AssistenteEncerramentos.css"
 
 permissions:
   contents: write
@@ -12,6 +13,12 @@ permissions:
 concurrency:
   group: assistente-encerramentos-publicacao
   cancel-in-progress: false
+
+env:
+  JS_SRC: AssistEnc/AssistenteEncerramentos.js
+  JS_MIN: AssistEnc/AssistenteEncerramentos.min.js
+  CSS_SRC: AssistEnc/AssistenteEncerramentos.css
+  CSS_MIN: AssistEnc/AssistenteEncerramentos.min.css
 
 jobs:
   minificar:
@@ -65,14 +72,14 @@ jobs:
                 exit 1
               }
             }
-          ' AssistenteEncerramentos.js > "$HEADER_FILE"
+          ' "$JS_SRC" > "$HEADER_FILE"
 
-          if [[ "$(tail -n 1 AssistenteEncerramentos.js)" != "//</nowiki>" ]]; then
+          if [[ "$(tail -n 1 "$JS_SRC")" != "//</nowiki>" ]]; then
             echo 'Erro: última linha deve ser //</nowiki>.' >&2
             exit 1
           fi
 
-          sed '1,/^ \*\/$/d' AssistenteEncerramentos.js \
+          sed '1,/^ \*\/$/d' "$JS_SRC" \
             | sed '$d' > "$BODY_FILE"
 
           npx --yes terser@5 "$BODY_FILE" \
@@ -80,10 +87,30 @@ jobs:
             --mangle \
             --output "$MIN_FILE"
 
-          cat "$HEADER_FILE" "$MIN_FILE" > AssistenteEncerramentos.min.js
-          printf '\n//</nowiki>\n' >> AssistenteEncerramentos.min.js
+          cat "$HEADER_FILE" "$MIN_FILE" > "$JS_MIN"
+          printf '\n//</nowiki>\n' >> "$JS_MIN"
 
-          echo "Minificação concluída com cabeçalho e nowiki preservados."
+          echo "Minificação do JavaScript concluída com cabeçalho e nowiki preservados."
+
+      - name: Minificar CSS
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! -s "$CSS_SRC" ]]; then
+            echo "Erro: $CSS_SRC não existe ou está vazio." >&2
+            exit 1
+          fi
+
+          # Comentários /*! ... */ (como o de créditos) são preservados.
+          npx --yes clean-css-cli@5 -o "$CSS_MIN" "$CSS_SRC"
+
+          if [[ ! -s "$CSS_MIN" ]]; then
+            echo "Erro: a minificação gerou $CSS_MIN vazio." >&2
+            exit 1
+          fi
+
+          echo "Minificação do CSS concluída."
 
       - name: Salvar resultado no GitHub
         id: salvar
@@ -95,14 +122,27 @@ jobs:
           git config user.email \
             "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add AssistenteEncerramentos.min.js
+          git add "$JS_MIN" "$CSS_MIN"
 
-          # O arquivo minificado é o gatilho da publicação na Wikipédia:
-          # só há publicação se ele foi alterado nesta execução.
+          # Os arquivos minificados são o gatilho da publicação na Wikipédia:
+          # cada página só é publicada se o seu minificado mudou nesta execução.
           if git diff --cached --quiet; then
-            echo "Nenhuma alteração no arquivo minificado. Nada será publicado."
-            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Nenhuma alteração nos arquivos minificados. Nada será publicado."
+            echo "js_changed=false" >> "$GITHUB_OUTPUT"
+            echo "css_changed=false" >> "$GITHUB_OUTPUT"
             exit 0
+          fi
+
+          CHANGED_FILES="$(git diff --cached --name-only)"
+          JS_CHANGED=false
+          CSS_CHANGED=false
+
+          if grep -qxF "$JS_MIN" <<< "$CHANGED_FILES"; then
+            JS_CHANGED=true
+          fi
+
+          if grep -qxF "$CSS_MIN" <<< "$CHANGED_FILES"; then
+            CSS_CHANGED=true
           fi
 
           git commit -m "build: minificar AssistenteEncerramentos"
@@ -112,7 +152,8 @@ jobs:
           for attempt in 1 2 3; do
             git pull --rebase origin main
             if git push origin HEAD:main; then
-              echo "changed=true" >> "$GITHUB_OUTPUT"
+              echo "js_changed=$JS_CHANGED" >> "$GITHUB_OUTPUT"
+              echo "css_changed=$CSS_CHANGED" >> "$GITHUB_OUTPUT"
               exit 0
             fi
             echo "Push rejeitado (tentativa $attempt/3). Tentando novamente..."
@@ -123,21 +164,34 @@ jobs:
           exit 1
 
       - name: Publicar na Wikipédia
-        if: steps.salvar.outputs.changed == 'true'
+        if: steps.salvar.outputs.js_changed == 'true' || steps.salvar.outputs.css_changed == 'true'
         shell: bash
         env:
           WIKI_USERNAME: ${{ secrets.WIKI_USERNAME }}
           WIKI_BOT_PASSWORD: ${{ secrets.WIKI_BOT_PASSWORD }}
+          WIKI_PUBLISH_JS: ${{ steps.salvar.outputs.js_changed }}
+          WIKI_PUBLISH_CSS: ${{ steps.salvar.outputs.css_changed }}
         run: |
           set -euo pipefail
 
-          # Sumário = assunto do último commit que alterou o arquivo original.
-          WIKI_EDIT_SUMMARY="$(git log -1 --format=%s -- AssistenteEncerramentos.js)"
-
-          if [[ -z "${WIKI_EDIT_SUMMARY//[[:space:]]/}" ]]; then
-            echo 'Erro: não foi possível obter o sumário do último commit de AssistenteEncerramentos.js.' >&2
-            exit 1
+          # Sumário de cada página = assunto do último commit que alterou
+          # o respectivo arquivo original (nunca o commit do bot).
+          if [[ "$WIKI_PUBLISH_JS" == "true" ]]; then
+            WIKI_SUMMARY_JS="$(git log -1 --format=%s -- "$JS_SRC")"
+            if [[ -z "${WIKI_SUMMARY_JS//[[:space:]]/}" ]]; then
+              echo "Erro: não foi possível obter o sumário do último commit de $JS_SRC." >&2
+              exit 1
+            fi
+            export WIKI_SUMMARY_JS
           fi
 
-          export WIKI_EDIT_SUMMARY
+          if [[ "$WIKI_PUBLISH_CSS" == "true" ]]; then
+            WIKI_SUMMARY_CSS="$(git log -1 --format=%s -- "$CSS_SRC")"
+            if [[ -z "${WIKI_SUMMARY_CSS//[[:space:]]/}" ]]; then
+              echo "Erro: não foi possível obter o sumário do último commit de $CSS_SRC." >&2
+              exit 1
+            fi
+            export WIKI_SUMMARY_CSS
+          fi
+
           node scripts/publicar-wiki.mjs
