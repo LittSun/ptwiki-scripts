@@ -2876,7 +2876,6 @@
 	 * @param {string}      notificante
 	 */
 	function openJqDialog(anchor, data, notificante) {
-		injectCss();
 		$('#assistEnc-dialog').remove();
 
 		var notificado = data.notificado;
@@ -3466,6 +3465,8 @@
 		setTimeout(prefetchSections, PREFETCH_DELAY);
 		// Pré-carrega o CodeMirror para o diálogo já abrir com ele
 		setTimeout(loadCodeMirror, PREFETCH_DELAY);
+		// Pré-carrega o CSS
+		injectCss();
 	}
 
 	mw.loader.using([
