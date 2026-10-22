@@ -1409,7 +1409,7 @@
 	// Versão e links de suporte
 	// ---------------------------------------------------------------------------
 
-	var VERSION = '2.2.1';
+	var VERSION = '2.2.2';
 
 	var DOC_PAGE = 'Usuário:Little Sunshine/Scripts/AssistenteEncerramentos';
 	var CHANGELOG_PAGE = DOC_PAGE + '/Changelog#' + VERSION;
@@ -2131,16 +2131,56 @@
 	// CSS (injetado uma única vez)
 	// ---------------------------------------------------------------------------
 
+	var CSS_TITLE = 'Usuário(a):Little Sunshine/Scripts/AssistenteEncerramentos.css';
 	var cssInjected = false;
-
+	
 	function injectCss() {
-	    if (cssInjected) {
-	        return;
-	    }
+		if (cssInjected) {
+			return;
+		}
+		cssInjected = true;
 	
-	    cssInjected = true;
+		var url = mw.util.wikiScript('index') + '?' + $.param({
+			title: CSS_TITLE,
+			action: 'raw',
+			ctype: 'text/css'
+		});
 	
-	    mw.loader.load('//pt.wikipedia.org/w/index.php?title=Usu%C3%A1rio:Little_Sunshine/Scripts/AssistenteEncerramentos.css&action=raw&ctype=text/css', 'text/css');
+		var link = document.createElement('link');
+		link.rel = 'stylesheet';
+		link.href = url;
+		link.onload = function() {
+			log('[AssistEnc] CSS carregado:', url);
+		};
+		link.onerror = function() {
+			log('[AssistEnc] Falha ao carregar o CSS via action=raw; tentando pela API:', url);
+			injectCssFallback();
+		};
+		document.head.appendChild(link);
+	}
+	
+	/** Reserva: lê o CSS pela API e o injeta como <style>. */
+	function injectCssFallback() {
+		api.get({
+			action: 'query',
+			prop: 'revisions',
+			rvprop: 'content',
+			rvslots: 'main',
+			titles: CSS_TITLE,
+			formatversion: 2
+		}).then(function(q) {
+			var page = q && q.query && q.query.pages && q.query.pages[0];
+			var rev = page && !page.missing && page.revisions && page.revisions[0];
+			var css = rev && rev.slots && rev.slots.main && rev.slots.main.content;
+			if (typeof css === 'string') {
+				mw.util.addCSS(css);
+				log('[AssistEnc] CSS aplicado pela API.');
+			} else {
+				console.warn('[AssistEnc] Página de CSS não encontrada:', CSS_TITLE); // eslint-disable-line no-console
+			}
+		}, function(code) {
+			console.warn('[AssistEnc] Falha ao obter o CSS:', code); // eslint-disable-line no-console
+		});
 	}
 	// ---------------------------------------------------------------------------
 	// Sessão de encerramento (lógica compartilhada entre desktop e mobile)
