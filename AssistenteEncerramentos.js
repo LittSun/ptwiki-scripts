@@ -1407,7 +1407,7 @@
 	// Versão e links de suporte
 	// ---------------------------------------------------------------------------
 
-	var VERSION = '2.1.1';
+	var VERSION = '2.1.2';
 
 	var DOC_PAGE = 'Usuário:Little Sunshine/Scripts/AssistenteEncerramentos';
 	var CHANGELOG_PAGE = DOC_PAGE + '/Changelog#' + VERSION;
@@ -2140,7 +2140,7 @@
 			/* — Desktop: dialog — */
 			'#assistEnc-sheet .assistEnc-smallBtn { font-size: 13px; padding: 4px 8px; }',
 			'#assistEnc-dialog textarea { width: 100%; padding: 5px; box-sizing: border-box; }',
-			'#assistEnc-dialog textarea { resize: vertical; font-family: monospace; font-size: 1em; line-height: 1.5; }',
+			'#assistEnc-dialog textarea { resize: vertical; font-family: monospace; font-size: 1.25em; line-height: 1.5; }',
 			'#assistEnc-blockDiv { display: none; }',
 			'#assistEnc-supDiv   { display: none; }',
 			'.assistEnc-label    { display: block; margin-top: 10px; }',
@@ -2173,13 +2173,13 @@
 			'#assistEnc-sheet textarea {',
 			'  width: 100%; box-sizing: border-box; padding: 6px; margin-top: 4px; }',
 			'#assistEnc-sheet textarea {',
-			'  resize: vertical; font-family: monospace; font-size: 1em; line-height: 1.5; min-height: 80px; }',
+			'  resize: vertical; font-family: monospace; font-size: 1.25em; line-height: 1.5; min-height: 80px; }',
 			/* — Editor: CodeMirror, sugestões, botões e rodapé — */
 			'.assistEnc-smallBtn { font-size: 11px; padding: 2px 6px; }',
 			'.assistEnc-editor { position: relative; display: block; }',
 			'.assistEnc-editor .cm-editor { border: 1px solid #a2a9b1; border-radius: 2px; background: var(--background-color-base, #fff); }',
 			'.assistEnc-editor .cm-editor.cm-focused { outline: 1px solid #36c; }',
-			'.assistEnc-editor .cm-scroller { min-height: 12em; max-height: 45vh; overflow: auto; font-family: monospace; font-size: 1em; line-height: 1.5; }',
+			'.assistEnc-editor .cm-scroller { min-height: 12em; max-height: 45vh; overflow: auto; font-family: monospace; font-size: 1.25em; line-height: 1.5; }',
 			'#assistEnc-sheet .assistEnc-editor .cm-scroller { min-height: 6em; font-size: 16px; }',
 			'.assistEnc-suggest { position: absolute; left: 0; right: 0; top: 100%; z-index: 20; margin: 2px 0 0;',
 			'  padding: 2px 0; list-style: none; max-height: 180px; overflow-y: auto;',
