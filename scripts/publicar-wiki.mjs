@@ -1,28 +1,30 @@
 const API_URL = 'https://pt.wikipedia.org/w/api.php';
 
-const PAGE_TITLE =
+const JS_PAGE_TITLE =
   'Usuário:Little Sunshine/Scripts/AssistenteEncerramentos.js';
+
+const CSS_PAGE_TITLE =
+  'Usuário:Little Sunshine/Scripts/AssistenteEncerramentos.css';
 
 const VERSION_PAGE_TITLE =
   'Usuário:Little Sunshine/Scripts/AssistenteEncerramentos/Versão';
 
-const SUMMARY_BASE = process.env.WIKI_EDIT_SUMMARY
-  ?.replace(/\s+/g, ' ')
-  .trim();
+const JS_SRC_PATH =
+  process.env.JS_SRC || 'AssistEnc/AssistenteEncerramentos.js';
+const JS_MIN_PATH =
+  process.env.JS_MIN || 'AssistEnc/AssistenteEncerramentos.min.js';
+const CSS_MIN_PATH =
+  process.env.CSS_MIN || 'AssistEnc/AssistenteEncerramentos.min.css';
 
-if (!SUMMARY_BASE) {
+const publishJs = process.env.WIKI_PUBLISH_JS === 'true';
+const publishCss = process.env.WIKI_PUBLISH_CSS === 'true';
+
+if (!publishJs && !publishCss) {
   throw new Error(
-    'WIKI_EDIT_SUMMARY está vazio. O sumário deve vir do último ' +
-    'commit do arquivo AssistenteEncerramentos.js.'
+    'Nada a publicar: WIKI_PUBLISH_JS e WIKI_PUBLISH_CSS não estão ' +
+    'definidos como "true".'
   );
 }
-
-const EDIT_SUMMARY =
-  `${SUMMARY_BASE.slice(0, 470)} (via GitHub)`;
-
-const FILE_PATH = 'AssistenteEncerramentos.min.js';
-
-const SOURCE_PATH = 'AssistenteEncerramentos.js';
 
 const username = process.env.WIKI_USERNAME;
 const password = process.env.WIKI_BOT_PASSWORD;
@@ -31,6 +33,19 @@ if (!username || !password) {
   throw new Error(
     'Configure WIKI_USERNAME e WIKI_BOT_PASSWORD nos GitHub Secrets.'
   );
+}
+
+function buildSummary(raw, variableName, sourceDescription) {
+  const base = raw?.replace(/\s+/g, ' ').trim();
+
+  if (!base) {
+    throw new Error(
+      `${variableName} está vazio. O sumário deve vir do último ` +
+      `commit de ${sourceDescription}.`
+    );
+  }
+
+  return `${base.slice(0, 470)} (via GitHub)`;
 }
 
 const fs = await import('node:fs/promises');
@@ -52,7 +67,7 @@ function extractVersion(source) {
 
   if (!match) {
     throw new Error(
-      `A variável "var version" não foi encontrada em ${SOURCE_PATH}.`
+      `A variável "var version" não foi encontrada em ${JS_SRC_PATH}.`
     );
   }
 
@@ -60,34 +75,69 @@ function extractVersion(source) {
 
   if (!version) {
     throw new Error(
-      `A variável "var version" em ${SOURCE_PATH} está vazia.`
+      `A variável "var version" em ${JS_SRC_PATH} está vazia.`
     );
   }
 
   return version;
 }
 
-const content = await readFileOrThrow(
-  FILE_PATH,
-  'o arquivo minificado'
-);
+let jsContent;
+let jsSummary;
+let version;
 
-if (!content.startsWith('//<nowiki>\n')) {
-  throw new Error('O cabeçalho //<nowiki> não foi encontrado.');
+if (publishJs) {
+  jsSummary = buildSummary(
+    process.env.WIKI_SUMMARY_JS,
+    'WIKI_SUMMARY_JS',
+    JS_SRC_PATH
+  );
+
+  jsContent = await readFileOrThrow(
+    JS_MIN_PATH,
+    'o arquivo JavaScript minificado'
+  );
+
+  if (!jsContent.startsWith('//<nowiki>\n')) {
+    throw new Error('O cabeçalho //<nowiki> não foi encontrado.');
+  }
+
+  if (!jsContent.trimEnd().endsWith('//</nowiki>')) {
+    throw new Error('O fechamento //</nowiki> não foi encontrado.');
+  }
+
+  const sourceContent = await readFileOrThrow(
+    JS_SRC_PATH,
+    'o arquivo JavaScript original'
+  );
+
+  version = extractVersion(sourceContent);
+
+  console.log(`Versão identificada em ${JS_SRC_PATH}: ${version}`);
 }
 
-if (!content.trimEnd().endsWith('//</nowiki>')) {
-  throw new Error('O fechamento //</nowiki> não foi encontrado.');
+let cssContent;
+let cssSummary;
+
+if (publishCss) {
+  const cssSrcPath =
+    process.env.CSS_SRC || 'AssistEnc/AssistenteEncerramentos.css';
+
+  cssSummary = buildSummary(
+    process.env.WIKI_SUMMARY_CSS,
+    'WIKI_SUMMARY_CSS',
+    cssSrcPath
+  );
+
+  cssContent = await readFileOrThrow(
+    CSS_MIN_PATH,
+    'o arquivo CSS minificado'
+  );
+
+  if (!cssContent.trim()) {
+    throw new Error(`O arquivo CSS minificado (${CSS_MIN_PATH}) está vazio.`);
+  }
 }
-
-const sourceContent = await readFileOrThrow(
-  SOURCE_PATH,
-  'o arquivo-fonte original'
-);
-
-const version = extractVersion(sourceContent);
-
-console.log(`Versão identificada em ${SOURCE_PATH}: ${version}`);
 
 const cookies = new Map();
 
@@ -228,6 +278,15 @@ async function publishPage(title, text, summary, csrfToken) {
   return editResponse.edit;
 }
 
+function logEdit(label, edit) {
+  console.log(`${label}: ${edit.title}`);
+  console.log(
+    edit.nochange
+      ? 'Sem alterações em relação à revisão anterior.'
+      : `Nova revisão: ${edit.newrevid}`
+  );
+}
+
 
 const loginTokenResponse = await api({
   action: 'query',
@@ -263,39 +322,47 @@ const csrfResponse = await api({
 
 const csrfToken = csrfResponse.query.tokens.csrftoken;
 
-const scriptEdit = await publishPage(
-  PAGE_TITLE,
-  content,
-  EDIT_SUMMARY,
-  csrfToken
-);
-
-console.log(`Página publicada: ${scriptEdit.title}`);
-console.log(
-  scriptEdit.nochange
-    ? 'Sem alterações em relação à revisão anterior.'
-    : `Nova revisão: ${scriptEdit.newrevid}`
-);
-
-let versionEdit;
-
-try {
-  versionEdit = await publishPage(
-    VERSION_PAGE_TITLE,
-    version,
-    EDIT_SUMMARY,
+if (publishCss) {
+  const cssEdit = await publishPage(
+    CSS_PAGE_TITLE,
+    cssContent,
+    cssSummary,
     csrfToken
   );
-} catch (error) {
-  throw new Error(
-    `O script principal foi publicado, mas a página de versão ` +
-    `(${VERSION_PAGE_TITLE}) não pôde ser atualizada: ${error.message}`
-  );
+
+  logEdit('Página de CSS publicada', cssEdit);
 }
 
-console.log(`Página de versão publicada: ${versionEdit.title}`);
-console.log(
-  versionEdit.nochange
-    ? `Versão ${version} já estava publicada (sem alterações).`
-    : `Versão ${version} publicada. Nova revisão: ${versionEdit.newrevid}`
-);
+if (publishJs) {
+  const scriptEdit = await publishPage(
+    JS_PAGE_TITLE,
+    jsContent,
+    jsSummary,
+    csrfToken
+  );
+
+  logEdit('Página publicada', scriptEdit);
+
+  let versionEdit;
+
+  try {
+    versionEdit = await publishPage(
+      VERSION_PAGE_TITLE,
+      version,
+      jsSummary,
+      csrfToken
+    );
+  } catch (error) {
+    throw new Error(
+      `O script principal foi publicado, mas a página de versão ` +
+      `(${VERSION_PAGE_TITLE}) não pôde ser atualizada: ${error.message}`
+    );
+  }
+
+  console.log(`Página de versão publicada: ${versionEdit.title}`);
+  console.log(
+    versionEdit.nochange
+      ? `Versão ${version} já estava publicada (sem alterações).`
+      : `Versão ${version} publicada. Nova revisão: ${versionEdit.newrevid}`
+  );
+}
