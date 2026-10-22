@@ -39,7 +39,7 @@ async function readFileOrThrow(path, description) {
 
 function extractVersion(source) {
   const match = source.match(
-    /^[ \t]*var[ \t]+version[ \t]*=[ \t]*(?:(['"`])([^\r\n]*?)\1|([\w.+-]+))[ \t]*[;,]?/m
+    /^[ \t]*var[ \t]+version[ \t]*=[ \t]*(?:(['"`])([^\r\n]*?)\1|([\w.+-]+))[ \t]*[;,]?/mi
   );
 
   if (!match) {
