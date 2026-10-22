@@ -6,11 +6,19 @@ const PAGE_TITLE =
 const VERSION_PAGE_TITLE =
   'Usuário:Little Sunshine/Scripts/AssistenteEncerramentos/Versão';
 
-const SUMMARY_BASE = process.env.WIKI_EDIT_SUMMARY?.trim();
+const SUMMARY_BASE = process.env.WIKI_EDIT_SUMMARY
+  ?.replace(/\s+/g, ' ')
+  .trim();
 
-const EDIT_SUMMARY = SUMMARY_BASE
-  ? `${SUMMARY_BASE} (via GitHub)`
-  : 'Atualização automática a partir do repositório GitHub';
+if (!SUMMARY_BASE) {
+  throw new Error(
+    'WIKI_EDIT_SUMMARY está vazio. O sumário deve vir do último ' +
+    'commit do arquivo AssistenteEncerramentos.js.'
+  );
+}
+
+const EDIT_SUMMARY =
+  `${SUMMARY_BASE.slice(0, 470)} (via GitHub)`;
 
 const FILE_PATH = 'AssistenteEncerramentos.min.js';
 
@@ -275,7 +283,7 @@ try {
   versionEdit = await publishPage(
     VERSION_PAGE_TITLE,
     version,
-    `Atualizando versão para ${version} (via GitHub)`,
+    EDIT_SUMMARY,
     csrfToken
   );
 } catch (error) {
