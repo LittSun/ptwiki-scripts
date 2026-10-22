@@ -1409,7 +1409,7 @@
 	// Versão e links de suporte
 	// ---------------------------------------------------------------------------
 
-	var VERSION = '2.2.0';
+	var VERSION = '2.2.1';
 
 	var DOC_PAGE = 'Usuário:Little Sunshine/Scripts/AssistenteEncerramentos';
 	var CHANGELOG_PAGE = DOC_PAGE + '/Changelog#' + VERSION;
@@ -2139,7 +2139,7 @@
 		}
 		cssInjected = true;
 		// Carregar arquivo CSS
-		mw.loader.load('//pt.wikipedia.org/w/index.php?title=Usu%C3%A1rio:Little_Sunshine/Scripts/AssistenteEncerramentos.css&action=raw&ctype=text/javascript');
+		mw.loader.load('//pt.wikipedia.org/w/index.php?title=Usu%C3%A1rio:Little_Sunshine/Scripts/AssistenteEncerramentos.css&action=raw&ctype=text/css');
 	}
 
 	// ---------------------------------------------------------------------------
