@@ -1407,7 +1407,7 @@
 	// Versão e links de suporte
 	// ---------------------------------------------------------------------------
 
-	var VERSION = '2.1.2';
+	var VERSION = '2.2.0';
 
 	var DOC_PAGE = 'Usuário:Little Sunshine/Scripts/AssistenteEncerramentos';
 	var CHANGELOG_PAGE = DOC_PAGE + '/Changelog#' + VERSION;
