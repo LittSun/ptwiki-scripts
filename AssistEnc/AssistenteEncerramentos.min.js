@@ -14,7 +14,7 @@
  *             são apenas registrados no console (padrão: false).
  *   window.assistEncBotoes (consultar documentação)
  *
- * [[Usuário:Little Sunshine/Scripts/AssistenteEncerramentos.css]]
+ * Estilos em [[Usuário:Little Sunshine/Scripts/AssistenteEncerramentos.css]]
  *
  * @author   [[User:Little Sunshine]]
  * @license  MIT
