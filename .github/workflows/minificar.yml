@@ -5,9 +5,6 @@ on:
     branches: [main]
     paths:
       - "AssistenteEncerramentos.js"
-      - ".github/workflows/minificar.yml"
-      - "scripts/publicar-wiki.mjs"
-  workflow_dispatch:
 
 permissions:
   contents: write
@@ -23,6 +20,8 @@ jobs:
     steps:
       - name: Baixar repositório
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Configurar Node.js
         uses: actions/setup-node@v4
@@ -87,6 +86,7 @@ jobs:
           echo "Minificação concluída com cabeçalho e nowiki preservados."
 
       - name: Salvar resultado no GitHub
+        id: salvar
         shell: bash
         run: |
           set -euo pipefail
@@ -97,8 +97,11 @@ jobs:
 
           git add AssistenteEncerramentos.min.js
 
+          # O arquivo minificado é o gatilho da publicação na Wikipédia:
+          # só há publicação se ele foi alterado nesta execução.
           if git diff --cached --quiet; then
-            echo "Nenhuma alteração no arquivo minificado."
+            echo "Nenhuma alteração no arquivo minificado. Nada será publicado."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -109,6 +112,7 @@ jobs:
           for attempt in 1 2 3; do
             git pull --rebase origin main
             if git push origin HEAD:main; then
+              echo "changed=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
             echo "Push rejeitado (tentativa $attempt/3). Tentando novamente..."
@@ -119,8 +123,21 @@ jobs:
           exit 1
 
       - name: Publicar na Wikipédia
+        if: steps.salvar.outputs.changed == 'true'
+        shell: bash
         env:
           WIKI_USERNAME: ${{ secrets.WIKI_USERNAME }}
           WIKI_BOT_PASSWORD: ${{ secrets.WIKI_BOT_PASSWORD }}
-          WIKI_EDIT_SUMMARY: ${{ github.event.head_commit.message }}
-        run: node scripts/publicar-wiki.mjs
+        run: |
+          set -euo pipefail
+
+          # Sumário = assunto do último commit que alterou o arquivo original.
+          WIKI_EDIT_SUMMARY="$(git log -1 --format=%s -- AssistenteEncerramentos.js)"
+
+          if [[ -z "${WIKI_EDIT_SUMMARY//[[:space:]]/}" ]]; then
+            echo 'Erro: não foi possível obter o sumário do último commit de AssistenteEncerramentos.js.' >&2
+            exit 1
+          fi
+
+          export WIKI_EDIT_SUMMARY
+          node scripts/publicar-wiki.mjs
