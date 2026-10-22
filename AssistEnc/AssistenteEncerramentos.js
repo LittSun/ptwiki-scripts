@@ -2134,14 +2134,17 @@
 	var cssInjected = false;
 
 	function injectCss() {
-		if (cssInjected) {
-			return;
-		}
-		cssInjected = true;
-		// Carregar arquivo CSS
-		mw.loader.load('//pt.wikipedia.org/w/index.php?title=Usu%C3%A1rio:Little_Sunshine/Scripts/AssistenteEncerramentos.css&action=raw&ctype=text/css');
+	    if (cssInjected) {
+	        return;
+	    }
+	
+	    cssInjected = true;
+	
+	    mw.loader.load(
+	        '//pt.wikipedia.org/w/index.php?title=Usu%C3%A1rio:Little_Sunshine/Scripts/AssistenteEncerramentos.css&action=raw&ctype=text/css',
+	        'text'
+	    );
 	}
-
 	// ---------------------------------------------------------------------------
 	// Sessão de encerramento (lógica compartilhada entre desktop e mobile)
 	// ---------------------------------------------------------------------------
