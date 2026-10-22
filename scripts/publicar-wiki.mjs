@@ -1,14 +1,20 @@
-
 const API_URL = 'https://pt.wikipedia.org/w/api.php';
 
 const PAGE_TITLE =
   'Usuário:Little Sunshine/Scripts/AssistenteEncerramentos.js';
 
-const EDIT_SUMMARY =
-  process.env.WIKI_EDIT_SUMMARY?.trim() + ' (via GitHub)' ||
-  'Atualização automática a partir do repositório GitHub';
+const VERSION_PAGE_TITLE =
+  'Usuário:Little Sunshine/Scripts/AssistenteEncerramentos/Versão';
+
+const SUMMARY_BASE = process.env.WIKI_EDIT_SUMMARY?.trim();
+
+const EDIT_SUMMARY = SUMMARY_BASE
+  ? `${SUMMARY_BASE} (via GitHub)`
+  : 'Atualização automática a partir do repositório GitHub';
 
 const FILE_PATH = 'AssistenteEncerramentos.min.js';
+
+const SOURCE_PATH = 'AssistenteEncerramentos.js';
 
 const username = process.env.WIKI_USERNAME;
 const password = process.env.WIKI_BOT_PASSWORD;
@@ -20,7 +26,43 @@ if (!username || !password) {
 }
 
 const fs = await import('node:fs/promises');
-const content = await fs.readFile(FILE_PATH, 'utf8');
+
+async function readFileOrThrow(path, description) {
+  try {
+    return await fs.readFile(path, 'utf8');
+  } catch (error) {
+    throw new Error(
+      `Não foi possível ler ${description} (${path}): ${error.message}`
+    );
+  }
+}
+
+function extractVersion(source) {
+  const match = source.match(
+    /^[ \t]*var[ \t]+version[ \t]*=[ \t]*(?:(['"`])([^\r\n]*?)\1|([\w.+-]+))[ \t]*[;,]?/m
+  );
+
+  if (!match) {
+    throw new Error(
+      `A variável "var version" não foi encontrada em ${SOURCE_PATH}.`
+    );
+  }
+
+  const version = (match[2] ?? match[3] ?? '').trim();
+
+  if (!version) {
+    throw new Error(
+      `A variável "var version" em ${SOURCE_PATH} está vazia.`
+    );
+  }
+
+  return version;
+}
+
+const content = await readFileOrThrow(
+  FILE_PATH,
+  'o arquivo minificado'
+);
 
 if (!content.startsWith('//<nowiki>\n')) {
   throw new Error('O cabeçalho //<nowiki> não foi encontrado.');
@@ -30,7 +72,15 @@ if (!content.trimEnd().endsWith('//</nowiki>')) {
   throw new Error('O fechamento //</nowiki> não foi encontrado.');
 }
 
-// Mantém os cookies recebidos durante a sessão autenticada.
+const sourceContent = await readFileOrThrow(
+  SOURCE_PATH,
+  'o arquivo-fonte original'
+);
+
+const version = extractVersion(sourceContent);
+
+console.log(`Versão identificada em ${SOURCE_PATH}: ${version}`);
+
 const cookies = new Map();
 
 function saveCookies(response) {
@@ -150,6 +200,27 @@ async function api(params, method = 'GET') {
 }
 
 
+async function publishPage(title, text, summary, csrfToken) {
+  const editResponse = await api({
+    action: 'edit',
+    title,
+    text,
+    summary,
+    token: csrfToken,
+    assert: 'user',
+    format: 'json'
+  }, 'POST');
+
+  if (editResponse.edit?.result !== 'Success') {
+    throw new Error(
+      `A API não confirmou a edição de "${title}".`
+    );
+  }
+
+  return editResponse.edit;
+}
+
+
 const loginTokenResponse = await api({
   action: 'query',
   meta: 'tokens',
@@ -184,19 +255,39 @@ const csrfResponse = await api({
 
 const csrfToken = csrfResponse.query.tokens.csrftoken;
 
-const editResponse = await api({
-  action: 'edit',
-  title: PAGE_TITLE,
-  text: content,
-  summary: EDIT_SUMMARY,
-  token: csrfToken,
-  assert: 'user',
-  format: 'json'
-}, 'POST');
+const scriptEdit = await publishPage(
+  PAGE_TITLE,
+  content,
+  EDIT_SUMMARY,
+  csrfToken
+);
 
-if (editResponse.edit?.result !== 'Success') {
-  throw new Error('A API não confirmou a edição.');
+console.log(`Página publicada: ${scriptEdit.title}`);
+console.log(
+  scriptEdit.nochange
+    ? 'Sem alterações em relação à revisão anterior.'
+    : `Nova revisão: ${scriptEdit.newrevid}`
+);
+
+let versionEdit;
+
+try {
+  versionEdit = await publishPage(
+    VERSION_PAGE_TITLE,
+    version,
+    `Atualizando versão para ${version} (via GitHub)`,
+    csrfToken
+  );
+} catch (error) {
+  throw new Error(
+    `O script principal foi publicado, mas a página de versão ` +
+    `(${VERSION_PAGE_TITLE}) não pôde ser atualizada: ${error.message}`
+  );
 }
 
-console.log(`Página publicada: ${editResponse.edit.title}`);
-console.log(`Nova revisão: ${editResponse.edit.newrevid}`);
+console.log(`Página de versão publicada: ${versionEdit.title}`);
+console.log(
+  versionEdit.nochange
+    ? `Versão ${version} já estava publicada (sem alterações).`
+    : `Versão ${version} publicada. Nova revisão: ${versionEdit.newrevid}`
+);
