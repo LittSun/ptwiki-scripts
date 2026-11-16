@@ -12,7 +12,9 @@
  *   - debug:  liga logs detalhados no console (padrão: false).
  *   - dryRun: nenhuma edição real é enviada; a transformação e o resumo
  *             são apenas registrados no console (padrão: false).
- *   window.assistEncBotoes (consultar documentação)
+ *   window.assistEncBotoes (consultar documentação). No "texto" de cada
+ *   botão: /i = cursor/seleção, /a = alvo do pedido (página ou usuário(a)),
+ *   /u = notificante.
  *
  * Estilos em [[Usuário:Little Sunshine/Scripts/AssistenteEncerramentos.css]]
  *
@@ -1409,7 +1411,7 @@
 	// Versão e links de suporte
 	// ---------------------------------------------------------------------------
 
-	var VERSION = '2.2.2';
+	var VERSION = '2.3.0';
 
 	var DOC_PAGE = 'Usuário:Little Sunshine/Scripts/AssistenteEncerramentos';
 	var CHANGELOG_PAGE = DOC_PAGE + '/Changelog#' + VERSION;
@@ -1444,7 +1446,9 @@
 	/**
 	 * @typedef  {Object} CustomButton
 	 * @property {string} etiqueta  Texto exibido no botão.
-	 * @property {string} texto     Texto inserido; "/i" marca onde fica a seleção/cursor.
+	 * @property {string} texto     Texto inserido. Marcadores: "/i" = onde fica a
+	 *                              seleção/cursor; "/a" = alvo do pedido (página ou
+	 *                              usuário(a)); "/u" = notificante.
 	 */
 
 	/**
@@ -1452,8 +1456,8 @@
 	 * Itens malformados são ignorados (com aviso no console em modo debug).
 	 *
 	 * Cada item: { tipo: 'notificação'|'pedido', pagina: 'Pedidos/Restauro',
-	 * texto: '{{Exemplo|/i}}', etiqueta: 'Exemplo' }. "pagina" aceita o título
-	 * completo ("Wikipédia:Pedidos/Restauro") ou sem o prefixo.
+	 * texto: '{{Exemplo|/a|por=/u|/i}}', etiqueta: 'Exemplo' }. "pagina" aceita
+	 * o título completo ("Wikipédia:Pedidos/Restauro") ou sem o prefixo.
 	 *
 	 * @param  {string} [requestType]
 	 * @param  {string} [pageTitle]
@@ -1493,53 +1497,117 @@
 	}
 
 	/**
-	 * Posição do primeiro marcador "/i" que não faz parte de uma tag "</i>".
-	 * @param  {string} text
-	 * @return {number} -1 se não houver.
+	 * @typedef  {Object} MarkerValues
+	 * @property {string} [alvo]         Valor de "/a": página ou usuário(a) alvo do pedido.
+	 * @property {string} [notificante]  Valor de "/u".
 	 */
-	function findMarker(text) {
-		var from = 0;
-		for (;;) {
-			var i = text.indexOf('/i', from);
-			if (i === -1) {
-				return -1;
+
+	/**
+	 * Expande os marcadores do texto de um botão personalizado:
+	 * - "/a" → alvo do pedido; "/u" → notificante (todas as ocorrências);
+	 * - "/i" → removido; a posição do PRIMEIRO é devolvida em "marker"
+	 *   (ocorrências seguintes ficam literais, como antes).
+	 * Não são marcadores: tags de fechamento ("</i>", "</a>", "</u>") e
+	 * sequências seguidas de letra ou dígito ("/aviso", "/usuários", "/item").
+	 * A expansão é feita numa só passagem, então um valor que contenha "/i"
+	 * (ex.: subpágina "X/ideias") nunca é confundido com o marcador.
+	 *
+	 * @param  {string}       texto
+	 * @param  {MarkerValues} [vars]
+	 * @return {{text: string, marker: number, missing: string[]}}
+	 *         marker = -1 se não houver "/i"; missing = marcadores ("/a", "/u")
+	 *         usados sem valor disponível.
+	 */
+	function expandMarkers(texto, vars) {
+		var v = vars || {};
+		var re = /\/([iau])(?![0-9A-Za-zÀ-ÖØ-öø-ÿ])/g;
+		var out = '';
+		var marker = -1;
+		var missing = [];
+		var last = 0;
+		var m;
+		while ((m = re.exec(texto)) !== null) {
+			if (m.index > 0 && texto.charAt(m.index - 1) === '<') {
+				continue; // </i>, </a>, </u>
 			}
-			if (i === 0 || text.charAt(i - 1) !== '<') {
-				return i;
+			out += texto.slice(last, m.index);
+			last = m.index + 2;
+			if (m[1] === 'i') {
+				if (marker === -1) {
+					marker = out.length;
+				} else {
+					out += '/i';
+				}
+				continue;
 			}
-			from = i + 2;
+			var val = String((m[1] === 'a' ? v.alvo : v.notificante) || '');
+			if (!val && missing.indexOf('/' + m[1]) === -1) {
+				missing.push('/' + m[1]);
+			}
+			out += val;
 		}
+		out += texto.slice(last);
+		return {
+			text: out,
+			marker: marker,
+			missing: missing
+		};
+	}
+
+	/**
+	 * Obtém o alvo do pedido a partir do título da seção já extraído por
+	 * extractNotificado(): destino do primeiro link ("[[:Página|x]]" → "Página"),
+	 * senão o 1º parâmetro da primeira predefinição ("{{Ln|Página}}"), senão o
+	 * próprio título.
+	 *
+	 * @param  {string} heading
+	 * @return {string}
+	 */
+	function extractAlvo(heading) {
+		var h = String(heading || '').trim();
+		var m = /\[\[\s*:?\s*([^\[\]|#]+)/.exec(h);
+		if (m) {
+			return m[1].replace(/_/g, ' ').trim();
+		}
+		m = /\{\{\s*[^{}|]+\|\s*(?:1\s*=\s*)?([^{}|=]+?)\s*(?:\||\}\})/.exec(h);
+		if (m) {
+			return m[1].replace(/_/g, ' ').trim();
+		}
+		return h;
 	}
 
 	/**
 	 * Insere o texto de um botão personalizado num valor, respeitando a seleção:
+	 * - "/a" e "/u" são substituídos pelo alvo e pelo notificante;
 	 * - sem seleção: o marcador "/i" é removido e o cursor fica onde ele estava;
 	 * - com seleção: a seleção ocupa o lugar do "/i" e o restante do texto a
 	 *   envolve; o cursor fica depois do trecho inserido.
-	 * Sem marcador, o texto substitui a seleção e o cursor vai para o fim.
+	 * Sem "/i", o texto substitui a seleção e o cursor vai para o fim.
 	 *
-	 * @param  {string} value  Conteúdo atual do campo.
-	 * @param  {number} start  Início da seleção.
-	 * @param  {number} end    Fim da seleção.
-	 * @param  {string} texto  Texto do botão.
-	 * @return {{value: string, cursor: number}}
+	 * @param  {string}       value  Conteúdo atual do campo.
+	 * @param  {number}       start  Início da seleção.
+	 * @param  {number}       end    Fim da seleção.
+	 * @param  {string}       texto  Texto do botão.
+	 * @param  {MarkerValues} [vars] Valores de "/a" e "/u".
+	 * @return {{value: string, cursor: number, missing: string[]}}
 	 */
-	function applyCustomText(value, start, end, texto) {
+	function applyCustomText(value, start, end, texto, vars) {
 		var selected = value.slice(start, end);
-		var m = findMarker(texto);
+		var exp = expandMarkers(texto, vars);
 		var insert, cursor;
-		if (m === -1) {
-			insert = texto;
+		if (exp.marker === -1) {
+			insert = exp.text;
 			cursor = start + insert.length;
 		} else {
-			var pre = texto.slice(0, m);
-			var post = texto.slice(m + 2);
+			var pre = exp.text.slice(0, exp.marker);
+			var post = exp.text.slice(exp.marker);
 			insert = pre + selected + post;
 			cursor = selected ? start + insert.length : start + pre.length;
 		}
 		return {
 			value: value.slice(0, start) + insert + value.slice(end),
-			cursor: cursor
+			cursor: cursor,
+			missing: exp.missing
 		};
 	}
 
@@ -2801,15 +2869,24 @@
 			cleanups.push(ed.destroy);
 		}
 
-		// Botões personalizados (texto com "/i" = posição da seleção)
+		// Botões personalizados ("/i" = seleção, "/a" = alvo, "/u" = notificante)
 		$root.on('click', '.assistEnc-customBtn', function() {
 			var b = info.buttons[Number($(this).attr('data-index'))];
 			if (!b || !ed) {
 				return;
 			}
 			var sel = ed.getSelection();
-			var r = applyCustomText(ed.getValue(), sel.start, sel.end, b.texto);
+			// session.data pode ter sido relido (seção alterada): lê o alvo na hora
+			var r = applyCustomText(ed.getValue(), sel.start, sel.end, b.texto, {
+				alvo: extractAlvo(session.data.notificado),
+				notificante: info.notificante
+			});
 			ed.setValue(r.value, r.cursor);
+			if (r.missing.length) {
+				notify('Não foi possível identificar ' + r.missing.map(function(k) {
+					return k === '/a' ? 'o alvo (/a)' : 'o(a) notificante (/u)';
+				}).join(' nem ') + '; o marcador ficou vazio.', 'warn');
+			}
 		});
 
 		// Obter último bloqueio
